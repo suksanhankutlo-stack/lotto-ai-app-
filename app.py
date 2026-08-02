@@ -280,7 +280,7 @@ class PatternBacktestSystem:
         return (probs + 0.01) / (probs + 0.01).sum()
 
 # ==========================================
-# 3. AI System (พร้อมระบบ Fallback ป้องกันคลาสแหว่ง)
+# 3. AI System
 # ==========================================
 class AISystem:
     def __init__(self, lottery_id, data_length):
@@ -310,7 +310,6 @@ class AISystem:
                 try: os.remove(old_file)  
                 except: pass  
 
-            # หุ้ม Try-Except ชุดใหญ่ป้องกัน Error ตอนทำ Cross-Val
             try:
                 if len(X_train) > 100:  
                     tscv = TimeSeriesSplit(n_splits=2)  
@@ -334,7 +333,6 @@ class AISystem:
                 else:  
                     best_base = VotingClassifier(estimators=self.estimators, voting='soft', n_jobs=-1)  
             except Exception:
-                # กรณีคลาสแหว่ง สลับมาใช้ Voting ธรรมดาข้ามการประเมิน
                 best_base = VotingClassifier(estimators=self.estimators, voting='soft', n_jobs=-1)
 
             calib_method = 'isotonic' if len(X_train) >= 200 else 'sigmoid'  
@@ -348,7 +346,6 @@ class AISystem:
                 try:
                     self.model.fit(X_train, y_train)
                 except Exception:
-                    # ป้องกันขั้นสุดท้าย ใช้ Base Model สดๆ เลย
                     self.model = clone(best_base)
                     self.model.fit(X_train, y_train)
 
@@ -637,8 +634,8 @@ if st.button("🚀 วิเคราะห์เลขเด่น (Turbo Speed
         
         preds, next_date = engine.predict_all(progress_bar)
         
-        # ทำให้ Progress Bar หายไปเมื่อทำเสร็จ
-        progress_bar.empty()
+        # แก้ปัญหาแอปพังจากเบราว์เซอร์แปลภาษา โดยให้หลอดโหลดเต็มแทนการลบทิ้ง
+        progress_bar.progress(100, text="โหลดข้อมูลเสร็จสิ้น!")
         
         st.success("✨ วิเคราะห์เสร็จสิ้นสมบูรณ์!")
         
