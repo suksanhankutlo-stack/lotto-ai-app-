@@ -39,6 +39,14 @@ warnings.filterwarnings('ignore')
 # ==========================================
 st.set_page_config(page_title="Ultimate Ensemble V.Max", page_icon="🎯", layout="wide")
 
+# โค้ดบังคับไม่ให้ Chrome แปลภาษาอัตโนมัติ (แก้ปัญหา Error removeChild)
+st.markdown("""
+    <style>
+        body { translate: no; }
+    </style>
+    <meta name="google" content="notranslate">
+""", unsafe_allow_html=True)
+
 @st.cache_resource
 def setup_thai_font():
     font_path = 'thsarabunnew-webfont.ttf'
@@ -634,7 +642,7 @@ if st.button("🚀 วิเคราะห์เลขเด่น (Turbo Speed
         
         preds, next_date = engine.predict_all(progress_bar)
         
-        # แก้ปัญหาแอปพังจากเบราว์เซอร์แปลภาษา โดยให้หลอดโหลดเต็มแทนการลบทิ้ง
+        # ปรับให้โหลด 100% แทนที่จะสั่งลบ เพื่อหลีกเลี่ยง Error removeChild จากเบราว์เซอร์
         progress_bar.progress(100, text="โหลดข้อมูลเสร็จสิ้น!")
         
         st.success("✨ วิเคราะห์เสร็จสิ้นสมบูรณ์!")
