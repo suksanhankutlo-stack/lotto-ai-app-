@@ -6,8 +6,13 @@ from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 from bs4 import BeautifulSoup
 import re
+
+# แก้ปัญหา Render กราฟบน Streamlit Cloud
+import matplotlib
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import matplotlib.font_manager as fm
+
 import urllib.request
 from datetime import datetime, timedelta
 import joblib
@@ -39,7 +44,7 @@ warnings.filterwarnings('ignore')
 # ==========================================
 st.set_page_config(page_title="Ultimate Ensemble V.Max", page_icon="🎯", layout="wide")
 
-# โค้ดบังคับไม่ให้ Chrome แปลภาษาอัตโนมัติ (แก้ปัญหา Error removeChild)
+# โค้ดบังคับไม่ให้ Chrome แปลภาษาอัตโนมัติ 
 st.markdown("""
     <style>
         body { translate: no; }
@@ -319,7 +324,8 @@ class AISystem:
                 except: pass  
 
             try:
-                if len(X_train) > 100:  
+                # เร่งความเร็ว: ถ้าข้อมูล < 500 ใช้ Voting ธรรมดา ไม่ต้อง Stacking
+                if len(X_train) >= 500:  
                     tscv = TimeSeriesSplit(n_splits=2)  
                     score_v, score_s = 0, 0  
                     for train_idx, val_idx in tscv.split(X_train):  
@@ -475,6 +481,7 @@ class EnsembleEngine:
             ]  
               
             try:
+                # เร่งความเร็ว: ใช้ Voting แทน Stacking ในข้อมูลน้อย
                 if n >= 500:  
                     bt_ai_base = StackingClassifier(estimators=lite_estimators, final_estimator=LogisticRegression(class_weight='balanced', max_iter=50), cv=2, n_jobs=-1)  
                 else:  
@@ -482,26 +489,21 @@ class EnsembleEngine:
             except Exception:
                 bt_ai_base = VotingClassifier(estimators=lite_estimators, voting='soft', n_jobs=-1)
 
-            calib_method = 'isotonic' if n >= 200 else 'sigmoid'  
-
+            # เร่งความเร็ว: ปิด CalibratedClassifierCV ในช่วง Backtest (ใช้ Base Model ตรงๆ)
             for i in range(bt_size):  
-                bt_ai_model = CalibratedClassifierCV(bt_ai_base, method=calib_method, cv=2)
+                bt_ai_model = clone(bt_ai_base)
                 
                 curr_train_len = len(X_all_fs) - bt_size + i  
                 X_train_step = X_all_fs.iloc[:curr_train_len]  
                 y_train_step = df_hist[pos].iloc[:curr_train_len]  
-                step_weights = full_sample_weights[:curr_train_len]  
                 X_test_step = X_all_fs.iloc[[curr_train_len]]  
                 actual_val = df_hist[pos].iloc[curr_train_len]  
 
                 try: 
-                    bt_ai_model.fit(X_train_step, y_train_step, sample_weight=step_weights)  
+                    bt_ai_model.fit(X_train_step, y_train_step)  
                 except Exception: 
-                    try:
-                        bt_ai_model.fit(X_train_step, y_train_step)
-                    except Exception:
-                        bt_ai_model = clone(bt_ai_base)
-                        bt_ai_model.fit(X_train_step, y_train_step)
+                    bt_ai_model = VotingClassifier(estimators=lite_estimators, voting='soft', n_jobs=-1)
+                    bt_ai_model.fit(X_train_step, y_train_step)
 
                 probs_ai = bt_ai_model.predict_proba(X_test_step)[0]  
                 ai_res = np.zeros(10)  
@@ -583,7 +585,7 @@ class EnsembleEngine:
             'Feat_Count': getattr(self, 'final_feat_count', 0)  
         }  
 
-    def predict_all(self, st_progress_bar):  
+    def predict_all(self, status_container):  
         last_date = self.df_raw['Date'].iloc[-1]  
         if self.target_dow is not None:  
             days_ahead = self.target_dow - last_date.dayofweek  
@@ -603,9 +605,9 @@ class EnsembleEngine:
         results = []  
         positions = ['H', 'T', 'O', 'T2', 'O2']  
           
+        # ใช้ status_container แทน progress_bar (ลดภาระ UI)
         for i, pos in enumerate(positions):  
-            progress_percent = int(((i + 1) / 5) * 100)
-            st_progress_bar.progress(progress_percent, text=f'กำลังประมวลผลโมเดล {self.ai_sys.model_name}: ตำแหน่ง {pos}...')
+            status_container.write(f"กำลังวิเคราะห์โมเดลตำแหน่ง {pos}...")
             res = self._process_single_position(pos, df_hist, X_all, next_x, next_date)  
             results.append(res)  
               
@@ -633,19 +635,15 @@ if st.button("🚀 วิเคราะห์เลขเด่น (Turbo Speed
     url = LOTTERY_SOURCES[selected_lotto]
     
     try:
-        with st.spinner("กำลังดึงและเตรียมข้อมูลจากแหล่งอ้างอิง..."):
+        # ใช้ st.status แทน st.progress ช่วยแก้ปัญหา UI ค้างและโหลดเร็วกว่า
+        with st.status("กำลังดึงข้อมูลและเตรียมวิเคราะห์...", expanded=True) as status:
             df_raw = fetch_and_clean_data(url)
+            status.write("ดึงข้อมูลสำเร็จ! กำลังสร้างฟีเจอร์...")
             engine = EnsembleEngine(df_raw, selected_lotto, target_dow=target_dow)
-
-        st.write("---")
-        progress_bar = st.progress(0, text="เตรียมเริ่มการวิเคราะห์โมเดล AI...")
-        
-        preds, next_date = engine.predict_all(progress_bar)
-        
-        # ปรับให้โหลด 100% แทนที่จะสั่งลบ เพื่อหลีกเลี่ยง Error removeChild จากเบราว์เซอร์
-        progress_bar.progress(100, text="โหลดข้อมูลเสร็จสิ้น!")
-        
-        st.success("✨ วิเคราะห์เสร็จสิ้นสมบูรณ์!")
+            
+            preds, next_date = engine.predict_all(status)
+            
+            status.update(label="✨ วิเคราะห์เสร็จสิ้นสมบูรณ์!", state="complete", expanded=False)
         
         dow_names = ["จันทร์", "อังคาร", "พุธ", "พฤหัสบดี", "ศุกร์", "เสาร์", "อาทิตย์"]  
         labels = {'H': 'หลักร้อย (บน)', 'T': 'หลักสิบ (บน)', 'O': 'หลักหน่วย (บน)', 'T2': 'หลักสิบ (ล่าง)', 'O2': 'หลักหน่วย (ล่าง)'}  
