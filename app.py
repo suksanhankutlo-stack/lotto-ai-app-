@@ -108,7 +108,7 @@ def run_prediction_den(selected_lotto, dow_input_str):
 
     fig = plt.figure(figsize=(10, 6))
     colors_list = ['#ef4444', '#f97316', '#22c55e', '#3b82f6', '#8b5cf6']
-    fig.patch.set_facecolor('#f8fafc') # ปรับสีพื้นหลังกราฟให้เข้ากับธีม
+    fig.patch.set_facecolor('#f8fafc') 
     
     for idx, pos in enumerate(['H', 'T', 'O', 'T2', 'O2']):
         ax = plt.subplot(2, 3, idx + 1)
@@ -159,11 +159,18 @@ def inject_custom_css():
         box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1);
     }
     
-    /* ปรับปรุงกล่อง Selectbox */
+    /* ปรับแต่งกล่อง Selectbox ให้มีสีสันและดูนูนขึ้น */
     div[data-baseweb="select"] > div {
-        border-radius: 8px;
-        border: 2px solid #e2e8f0;
-        background-color: #ffffff;
+        border-radius: 10px;
+        border: 2px solid #60a5fa !important; /* กรอบสีฟ้าอ่อน */
+        background-color: #eff6ff !important; /* พื้นหลังสีฟ้าอ่อนมากๆ */
+        color: #1e293b !important;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+        font-weight: bold;
+    }
+    /* ปรับสีเมื่อ Hover หรือ Focus ช่อง Selectbox */
+    div[data-baseweb="select"] > div:hover {
+        border: 2px solid #2563eb !important; 
     }
     
     /* ปรับแต่งปุ่มกดให้อลังการขึ้น */
@@ -188,6 +195,14 @@ def inject_custom_css():
 # =========================================================
 def main():
     st.set_page_config(page_title="Lotto AI All-in-One", page_icon="🎯", layout="wide")
+    
+    # 🌟 จัดการ Session State เพื่อเก็บผลลัพธ์ไว้แสดงด้านล่าง
+    if 'analysis_mode' not in st.session_state:
+        st.session_state.analysis_mode = None
+    if 'result_text' not in st.session_state:
+        st.session_state.result_text = None
+    if 'result_fig' not in st.session_state:
+        st.session_state.result_fig = None
     
     # ดึง CSS มาใช้
     inject_custom_css()
@@ -217,24 +232,41 @@ def main():
 
     st.markdown("---")
 
-    # ปรับแต่งปุ่มให้ใช้งานได้ง่าย
+    # ปรับแต่งปุ่มและบันทึกผลลัพธ์ลง Session State แทนที่จะปริ้นท์ออกมาตรงนี้
     col1, col2 = st.columns(2)
 
     with col1:
         if st.button("🛑 เริ่มวิเคราะห์เลขดับ", type="primary", use_container_width=True):
             with st.spinner("⏳ กำลังประมวลผลเลขดับ..."):
                 result_dub = run_analysis_dub(lotto, day)
-                # ใช้ st.error เพื่อให้ผลลัพธ์อยู่ในกรอบสีแดง (สื่อถึงเลขดับ)
-                st.error(result_dub)
+                # บันทึกสถานะเพื่อนำไปแสดงผลด้านล่าง
+                st.session_state.analysis_mode = 'dub'
+                st.session_state.result_text = result_dub
+                st.session_state.result_fig = None
 
     with col2:
         if st.button("🎯 เริ่มวิเคราะห์เลขเด่น", type="primary", use_container_width=True):
             with st.spinner("⏳ กำลังประมวลผลเลขเด่น..."):
                 text, fig = run_prediction_den(lotto, day)
-                # ใช้ st.success เพื่อให้ผลลัพธ์อยู่ในกรอบสีเขียว (สื่อถึงเลขเด่น/แนะนำ)
-                st.success(text)
-                if fig:
-                    st.pyplot(fig)
+                # บันทึกสถานะเพื่อนำไปแสดงผลด้านล่าง
+                st.session_state.analysis_mode = 'den'
+                st.session_state.result_text = text
+                st.session_state.result_fig = fig
+
+    # =========================================================
+    # 6. พื้นที่แสดงผล (ซ่อน/แสดงได้) อยู่ล่างสุดเสมอ
+    # =========================================================
+    if st.session_state.analysis_mode is not None:
+        st.write("") # เว้นบรรทัดนิดหน่อย
+        
+        # ใส่กล่อง Expander สำหรับซ่อน/แสดง
+        with st.expander("✨ เปิด/ปิด ผลการวิเคราะห์", expanded=True):
+            if st.session_state.analysis_mode == 'dub':
+                st.error(st.session_state.result_text)
+            elif st.session_state.analysis_mode == 'den':
+                st.success(st.session_state.result_text)
+                if st.session_state.result_fig:
+                    st.pyplot(st.session_state.result_fig)
 
 if __name__ == "__main__":
     main()
