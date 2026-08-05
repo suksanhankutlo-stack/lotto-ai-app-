@@ -1,11 +1,10 @@
-streamlit==1.49.0
+streamlit
 pandas
 numpy
+matplotlib
+scikit-learn
+xgboost
 requests
 beautifulsoup4
 lxml
-matplotlib
-scipy
-scikit-learn
-xgboost
 joblib
