@@ -123,7 +123,7 @@ def run_prediction_den(selected_lotto, dow_input_str):
 # =========================================================
 def main():
     st.set_page_config(page_title="Lotto AI All-in-One", page_icon="🎯", layout="wide")
-    st.title("🎯 Lotto AI All-in-One PRO V4")
+    st.title("🎯 สูตรคำนวณ AI ")
     
     st.markdown("""
     **ระบบวิเคราะห์เลขดับ (Candidate Elimination) - PRO V4 (Adaptive)** | 
