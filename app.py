@@ -159,18 +159,14 @@ def inject_custom_css():
         box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1);
     }
     
-    /* ปรับแต่งกล่อง Selectbox ให้มีสีสันและดูนูนขึ้น */
-    div[data-baseweb="select"] > div {
-        border-radius: 10px;
-        border: 2px solid #60a5fa !important; /* กรอบสีฟ้าอ่อน */
-        background-color: #eff6ff !important; /* พื้นหลังสีฟ้าอ่อนมากๆ */
-        color: #1e293b !important;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.05);
-        font-weight: bold;
+    /* บังคับเปลี่ยนสีช่อง Selectbox ใหม่ */
+    div[data-testid="stSelectbox"] > div > div {
+        background-color: #eff6ff !important; /* พื้นหลังสีฟ้าอ่อน */
+        border: 2px solid #93c5fd !important; /* กรอบสีฟ้า */
+        border-radius: 8px;
     }
-    /* ปรับสีเมื่อ Hover หรือ Focus ช่อง Selectbox */
-    div[data-baseweb="select"] > div:hover {
-        border: 2px solid #2563eb !important; 
+    div[data-testid="stSelectbox"] > div > div:hover {
+        border: 2px solid #3b82f6 !important; /* กรอบเข้มขึ้นตอนเอาเมาส์ชี้ */
     }
     
     /* ปรับแต่งปุ่มกดให้อลังการขึ้น */
@@ -196,7 +192,7 @@ def inject_custom_css():
 def main():
     st.set_page_config(page_title="Lotto AI All-in-One", page_icon="🎯", layout="wide")
     
-    # 🌟 จัดการ Session State เพื่อเก็บผลลัพธ์ไว้แสดงด้านล่าง
+    # 🌟 จัดการ Session State เพื่อเก็บผลลัพธ์
     if 'analysis_mode' not in st.session_state:
         st.session_state.analysis_mode = None
     if 'result_text' not in st.session_state:
@@ -232,41 +228,45 @@ def main():
 
     st.markdown("---")
 
-    # ปรับแต่งปุ่มและบันทึกผลลัพธ์ลง Session State แทนที่จะปริ้นท์ออกมาตรงนี้
+    # ส่วนนี้มีแค่ "ปุ่ม" ล้วนๆ ไม่มีการเขียนโค้ดโหลดข้อมูลตรงนี้ เพื่อไม่ให้เลย์เอาต์เบี้ยว
     col1, col2 = st.columns(2)
-
     with col1:
-        if st.button("🛑 เริ่มวิเคราะห์เลขดับ", type="primary", use_container_width=True):
-            with st.spinner("⏳ กำลังประมวลผลเลขดับ..."):
+        btn_dub = st.button("🛑 เริ่มวิเคราะห์เลขดับ", type="primary", use_container_width=True)
+    with col2:
+        btn_den = st.button("🎯 เริ่มวิเคราะห์เลขเด่น", type="primary", use_container_width=True)
+
+    # =========================================================
+    # 6. พื้นที่ประมวลผลและแสดงผล (ย้ายมาอยู่ล่างสุดเสมอ)
+    # =========================================================
+    bottom_area = st.container() # สร้างกล่องจำลองไว้ล่างสุด
+    
+    with bottom_area:
+        # ถ้าปุ่มเลขดับถูกกด -> แสดงตัวโหลดตรงนี้
+        if btn_dub:
+            with st.spinner("⏳ กำลังประมวลผลเลขดับ... กรุณารอสักครู่"):
                 result_dub = run_analysis_dub(lotto, day)
-                # บันทึกสถานะเพื่อนำไปแสดงผลด้านล่าง
                 st.session_state.analysis_mode = 'dub'
                 st.session_state.result_text = result_dub
                 st.session_state.result_fig = None
-
-    with col2:
-        if st.button("🎯 เริ่มวิเคราะห์เลขเด่น", type="primary", use_container_width=True):
-            with st.spinner("⏳ กำลังประมวลผลเลขเด่น..."):
+                
+        # ถ้าปุ่มเลขเด่นถูกกด -> แสดงตัวโหลดตรงนี้
+        elif btn_den:
+            with st.spinner("⏳ กำลังประมวลผลเลขเด่น... กรุณารอสักครู่"):
                 text, fig = run_prediction_den(lotto, day)
-                # บันทึกสถานะเพื่อนำไปแสดงผลด้านล่าง
                 st.session_state.analysis_mode = 'den'
                 st.session_state.result_text = text
                 st.session_state.result_fig = fig
 
-    # =========================================================
-    # 6. พื้นที่แสดงผล (ซ่อน/แสดงได้) อยู่ล่างสุดเสมอ
-    # =========================================================
-    if st.session_state.analysis_mode is not None:
-        st.write("") # เว้นบรรทัดนิดหน่อย
-        
-        # ใส่กล่อง Expander สำหรับซ่อน/แสดง
-        with st.expander("✨ เปิด/ปิด ผลการวิเคราะห์", expanded=True):
-            if st.session_state.analysis_mode == 'dub':
-                st.error(st.session_state.result_text)
-            elif st.session_state.analysis_mode == 'den':
-                st.success(st.session_state.result_text)
-                if st.session_state.result_fig:
-                    st.pyplot(st.session_state.result_fig)
+        # การแสดงผลลัพธ์แบบเปิด/ปิดได้ (Expander)
+        if st.session_state.analysis_mode is not None:
+            st.write("") # เว้นบรรทัดนิดหน่อย
+            with st.expander("✨ เปิด/ปิด พื้นที่แสดงผลการวิเคราะห์", expanded=True):
+                if st.session_state.analysis_mode == 'dub':
+                    st.error(st.session_state.result_text)
+                elif st.session_state.analysis_mode == 'den':
+                    st.success(st.session_state.result_text)
+                    if st.session_state.result_fig:
+                        st.pyplot(st.session_state.result_fig)
 
 if __name__ == "__main__":
     main()
