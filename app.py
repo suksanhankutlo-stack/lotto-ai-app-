@@ -108,52 +108,131 @@ def run_prediction_den(selected_lotto, dow_input_str):
 
     fig = plt.figure(figsize=(10, 6))
     colors_list = ['#ef4444', '#f97316', '#22c55e', '#3b82f6', '#8b5cf6']
+    fig.patch.set_facecolor('#f8fafc') # ปรับสีพื้นหลังกราฟให้เข้ากับธีม
+    
     for idx, pos in enumerate(['H', 'T', 'O', 'T2', 'O2']):
         ax = plt.subplot(2, 3, idx + 1)
+        ax.set_facecolor('#ffffff')
         top_5_items = preds[pos]['Final']
-        ax.bar([str(x[0]) for x in top_5_items], [x[1]*100 for x in top_5_items], color=colors_list)
-        ax.set_title(labels[pos].split(' ')[1] + ' ' + labels[pos].split(' ')[2], fontsize=10)
-        ax.grid(axis='y', linestyle='--', alpha=0.5)
+        ax.bar([str(x[0]) for x in top_5_items], [x[1]*100 for x in top_5_items], color=colors_list, edgecolor='white', linewidth=1.2)
+        ax.set_title(labels[pos].split(' ')[1] + ' ' + labels[pos].split(' ')[2], fontsize=10, fontweight='bold', color='#334155')
+        ax.grid(axis='y', linestyle='--', alpha=0.3)
+        
     plt.tight_layout()
 
     return out, fig
 
 # =========================================================
-# 4. หน้าจอ UI (Streamlit)
+# 4. ตกแต่ง UI ด้วย Custom CSS
+# =========================================================
+def inject_custom_css():
+    st.markdown("""
+    <style>
+    /* ตกแต่งพื้นหลังแอป */
+    .stApp {
+        background-color: #f8fafc;
+    }
+    
+    /* ตกแต่ง Header แบบ Gradient */
+    .title-text {
+        text-align: center;
+        font-size: 3.5rem;
+        font-weight: 900;
+        background: -webkit-linear-gradient(45deg, #2563eb, #db2777);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        margin-bottom: 0px;
+        padding-bottom: 10px;
+    }
+    
+    /* ตกแต่งคำบรรยาย (Subtitle) */
+    .subtitle-text {
+        text-align: center;
+        color: #475569;
+        font-size: 1.1rem;
+        font-weight: 500;
+        margin-top: -10px;
+        margin-bottom: 30px;
+        padding: 15px;
+        background-color: #ffffff;
+        border-radius: 12px;
+        box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1);
+    }
+    
+    /* ปรับปรุงกล่อง Selectbox */
+    div[data-baseweb="select"] > div {
+        border-radius: 8px;
+        border: 2px solid #e2e8f0;
+        background-color: #ffffff;
+    }
+    
+    /* ปรับแต่งปุ่มกดให้อลังการขึ้น */
+    div.stButton > button {
+        border-radius: 8px;
+        font-size: 18px;
+        font-weight: bold;
+        padding: 0.6rem;
+        border: none;
+        transition: all 0.3s ease;
+        box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1);
+    }
+    div.stButton > button:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 10px 15px -3px rgb(0 0 0 / 0.1);
+    }
+    </style>
+    """, unsafe_allow_html=True)
+
+# =========================================================
+# 5. หน้าจอ UI (Streamlit)
 # =========================================================
 def main():
     st.set_page_config(page_title="Lotto AI All-in-One", page_icon="🎯", layout="wide")
-    st.title("สูตรคำนวณ AI ")
+    
+    # ดึง CSS มาใช้
+    inject_custom_css()
+    
+    # ใช้ HTML สร้างหัวข้อสวยๆ
+    st.markdown('<h1 class="title-text">✨ สูตรคำนวณ AI 🤖</h1>', unsafe_allow_html=True)
     
     st.markdown("""
-    **ระบบวิเคราะห์เลขดับ (Candidate Elimination) - PRO V4 (Adaptive)** | 
-    **ระบบวิเคราะห์เลขเด่น Ultimate Ensemble (Optimized Fast Mode)**
-    """)
+    <div class="subtitle-text">
+        🛑 <b>ระบบวิเคราะห์เลขดับ (Candidate Elimination)</b> - PRO V4 (Adaptive) <br>
+        🎯 <b>ระบบวิเคราะห์เลขเด่น Ultimate Ensemble</b> (Optimized Fast Mode)
+    </div>
+    """, unsafe_allow_html=True)
 
-    lotto = st.selectbox(
-        "เลือกประเภทหวย",
-        ["หวยไทย","หวยธกส","หวยออมสิน","หวยลาว","หวยฮานอย","หวยมาเลย์","หวยหุ้นไทยเย็น","หวยหุ้นนิเคอิบ่าย","หวยหุ้นฮั่งเส็งบ่าย","หวยหุ้นจีนบ่าย"]
-    )
-
-    day = st.selectbox(
-        "เลือกวัน",
-        ["อัตโนมัติ (คำนวณจากงวดล่าสุด)", "วันจันทร์","วันอังคาร","วันพุธ","วันพฤหัสบดี","วันศุกร์","วันเสาร์","วันอาทิตย์"]
-    )
+    # แบ่งคอลัมน์สำหรับการเลือกข้อมูล
+    c1, c2 = st.columns(2)
+    with c1:
+        lotto = st.selectbox(
+            "🏷️ เลือกประเภทหวย",
+            ["หวยไทย","หวยธกส","หวยออมสิน","หวยลาว","หวยฮานอย","หวยมาเลย์","หวยหุ้นไทยเย็น","หวยหุ้นนิเคอิบ่าย","หวยหุ้นฮั่งเส็งบ่าย","หวยหุ้นจีนบ่าย"]
+        )
+    with c2:
+        day = st.selectbox(
+            "📅 เลือกวัน",
+            ["อัตโนมัติ (คำนวณจากงวดล่าสุด)", "วันจันทร์","วันอังคาร","วันพุธ","วันพฤหัสบดี","วันศุกร์","วันเสาร์","วันอาทิตย์"]
+        )
 
     st.markdown("---")
 
+    # ปรับแต่งปุ่มให้ใช้งานได้ง่าย
     col1, col2 = st.columns(2)
 
     with col1:
-        if st.button("🛑 วิเคราะห์เลขดับ", use_container_width=True):
-            with st.spinner("กำลังประมวลผลเลขดับ..."):
-                st.markdown(run_analysis_dub(lotto, day))
+        if st.button("🛑 เริ่มวิเคราะห์เลขดับ", type="primary", use_container_width=True):
+            with st.spinner("⏳ กำลังประมวลผลเลขดับ..."):
+                result_dub = run_analysis_dub(lotto, day)
+                # ใช้ st.error เพื่อให้ผลลัพธ์อยู่ในกรอบสีแดง (สื่อถึงเลขดับ)
+                st.error(result_dub)
 
     with col2:
-        if st.button("🎯 วิเคราะห์เลขเด่น", use_container_width=True):
-            with st.spinner("กำลังประมวลผลเลขเด่น..."):
+        if st.button("🎯 เริ่มวิเคราะห์เลขเด่น", type="primary", use_container_width=True):
+            with st.spinner("⏳ กำลังประมวลผลเลขเด่น..."):
                 text, fig = run_prediction_den(lotto, day)
-                st.markdown(text)
+                # ใช้ st.success เพื่อให้ผลลัพธ์อยู่ในกรอบสีเขียว (สื่อถึงเลขเด่น/แนะนำ)
+                st.success(text)
                 if fig:
                     st.pyplot(fig)
 
