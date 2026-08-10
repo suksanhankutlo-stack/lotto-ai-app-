@@ -1,848 +1,150 @@
 # ============================================================
-# 🚀 LOTTO AI PRO V7 AI-ONLY + CANDIDATE ELIMINATION
-# Mobile Accuracy Edition
+# 🤖 LOTTO AI PRO V7 ADAPTIVE
+# AI-ONLY • FAST MOBILE • AUTO BACKTEST
+# ============================================================
 #
-# 🎯 เลขเด่น  : PRO V7 AI-ONLY
-# 🛑 เลขดับ   : Candidate Elimination
+# FEATURES
+# ------------------------------------------------------------
+# ✅ AI ONLY
+# ✅ ExtraTrees
+# ✅ RandomForest
+# ✅ HistGradientBoosting
+# ✅ Lightweight Walk-Forward Backtest
+# ✅ Automatic Model Selection
+# ✅ Top-1 / Top-3 / Top-5 Accuracy
+# ✅ Dead-7 Coverage
+# ✅ AI Hot Numbers
+# ✅ AI Dead Numbers
+# ✅ Data Cache
+# ✅ Model Cache
+# ✅ Mobile Optimized
+# ✅ Single app.py
 #
-# สำหรับ Streamlit / GitHub / Streamlit Cloud
+# NO:
+# ❌ secret_lotto_v4.py
+# ❌ secret_lotto_den_v4.py
+# ❌ XGBoost
+# ❌ Markov
+# ❌ Frequency
+# ❌ Calendar voting
+# ❌ Equation system
+#
 # ============================================================
 
-import os
-import sys
+import re
 import hashlib
-import urllib.request
-import importlib.util
-from datetime import timedelta
+import warnings
+from datetime import datetime, timedelta
 
 import numpy as np
 import pandas as pd
+import requests
 import streamlit as st
 
+from bs4 import BeautifulSoup
+
+from sklearn.ensemble import (
+    ExtraTreesClassifier,
+    RandomForestClassifier,
+    HistGradientBoostingClassifier
+)
+
+warnings.filterwarnings("ignore")
+
+
 # ============================================================
-# 0. CONFIG
+# 1. STREAMLIT CONFIG
 # ============================================================
 
 st.set_page_config(
-    page_title="Lotto AI PRO V7",
-    page_icon="🎯",
+    page_title="Lotto AI PRO V7 Adaptive",
+    page_icon="🤖",
     layout="wide",
     initial_sidebar_state="collapsed"
 )
 
-# ============================================================
-# 1. URL ของสมองระบบ
-# ============================================================
-
-URL_V7_AI = (
-    "https://raw.githubusercontent.com/"
-    "suksanhankutlo-stack/lotto-ai-app-/"
-    "refs/heads/main/secret_lotto_v7_ai.py"
-)
-
-URL_DUB = (
-    "https://raw.githubusercontent.com/"
-    "suksanhankutlo-stack/lotto-ai-app-/"
-    "refs/heads/main/secret_lotto_v4.py"
-)
-
-V7_FILE = "secret_lotto_v7_ai.py"
-DUB_FILE = "secret_lotto_v4.py"
-
 
 # ============================================================
-# 2. DOWNLOAD MODULE
+# 2. LOTTERY SOURCES
 # ============================================================
 
-@st.cache_resource(show_spinner=False)
-def download_module(url, filename):
+LOTTERY_SOURCES = {
 
-    try:
-        if not os.path.exists(filename) or os.path.getsize(filename) == 0:
-            urllib.request.urlretrieve(url, filename)
+    "หวยไทย":
+        "https://suksan18190.blogspot.com/2026/07/blog-post_07.html",
 
-        return filename
+    "หวยธกส":
+        "https://suksan18190.blogspot.com/2026/07/blog-post_12.html",
 
-    except Exception as e:
-        st.error(f"❌ ดาวน์โหลด {filename} ไม่สำเร็จ\n\n{e}")
-        return None
+    "หวยออมสิน":
+        "https://suksan18190.blogspot.com/2026/07/blog-post_525.html",
 
+    "หวยลาว":
+        "https://suksan18190.blogspot.com/2026/07/blog-post.html",
 
-# ============================================================
-# 3. LOAD PYTHON MODULE
-# ============================================================
+    "หวยฮานอย":
+        "https://suksan18190.blogspot.com/2026/07/blog-post_08.html",
 
-@st.cache_resource(show_spinner=False)
-def load_python_module(filepath, module_name):
+    "หวยมาเลย์":
+        "https://suksan18190.blogspot.com/2026/07/blog-post_10.html",
 
-    try:
+    "หวยหุ้นไทยเย็น":
+        "https://suksan18190.blogspot.com/2026/07/blog-post_11.html",
 
-        spec = importlib.util.spec_from_file_location(
-            module_name,
-            filepath
-        )
+    "หวยหุ้นนิเคอิบ่าย":
+        "https://suksan18190.blogspot.com/2026/07/blog-post_412.html",
 
-        if spec is None or spec.loader is None:
-            raise ImportError(
-                f"ไม่สามารถสร้าง module spec: {filepath}"
-            )
+    "หวยหุ้นฮั่งเส็งบ่าย":
+        "https://suksan18190.blogspot.com/2026/07/blog-post_229.html",
 
-        module = importlib.util.module_from_spec(spec)
-
-        sys.modules[module_name] = module
-
-        spec.loader.exec_module(module)
-
-        return module
-
-    except Exception as e:
-
-        st.error(
-            f"❌ โหลดระบบ {module_name} ไม่สำเร็จ\n\n"
-            f"{type(e).__name__}: {e}"
-        )
-
-        return None
+    "หวยหุ้นจีนบ่าย":
+        "https://suksan18190.blogspot.com/2026/07/blog-post_162.html",
+}
 
 
 # ============================================================
-# 4. LOAD V7 AI + DUB SYSTEM
+# 3. CONSTANTS
 # ============================================================
 
-v7_path = download_module(URL_V7_AI, V7_FILE)
-dub_path = download_module(URL_DUB, DUB_FILE)
-
-if v7_path is None or dub_path is None:
-    st.stop()
-
-V7 = load_python_module(
-    v7_path,
-    "secret_lotto_v7_ai"
-)
-
-DUB = load_python_module(
-    dub_path,
-    "secret_lotto_v4"
-)
-
-if V7 is None or DUB is None:
-    st.stop()
-
-
-# ============================================================
-# 5. FIND V7 ENGINE
-# ============================================================
-
-# รองรับชื่อ Class ที่อาจต่างกันใน secret_lotto_v7_ai.py
-
-V7_ENGINE = None
-
-for class_name in [
-    "PROV7AIOnly",
-    "PROV7AIOnlyEngine",
-    "AIOnlyEngine",
-    "EnsembleEngine",
-]:
-
-    if hasattr(V7, class_name):
-
-        V7_ENGINE = getattr(V7, class_name)
-        break
-
-
-# ============================================================
-# 6. FIND DATA FUNCTIONS
-# ============================================================
-
-V7_SOURCES = getattr(
-    V7,
-    "LOTTERY_SOURCES",
-    {}
-)
-
-V7_FETCH = getattr(
-    V7,
-    "fetch_and_clean_data",
-    None
-)
-
-# ระบบเลขดับ
-DUB_SCRAPER = getattr(
-    DUB,
-    "LotteryScraper",
-    None
-)
-
-DUB_ENGINE = getattr(
-    DUB,
-    "OptimizedEliminationSystemV4",
-    None
-)
-
-
-# ============================================================
-# 7. LOTTERY MAP
-# ============================================================
-
-LOTTERY_LIST = [
-    "หวยไทย",
-    "หวยธกส",
-    "หวยออมสิน",
-    "หวยลาว",
-    "หวยฮานอย",
-    "หวยมาเลย์",
-    "หวยหุ้นไทยเย็น",
-    "หวยหุ้นนิเคอิบ่าย",
-    "หวยหุ้นฮั่งเส็งบ่าย",
-    "หวยหุ้นจีนบ่าย",
+POSITIONS = [
+    "H",
+    "T",
+    "O",
+    "T2",
+    "O2"
 ]
 
-LOTTERY_MAP = {
-    "หวยไทย": "1. หวยไทย",
-    "หวยธกส": "2. หวยธกส.",
-    "หวยออมสิน": "3. หวยออมสิน",
-    "หวยลาว": "4. หวยลาว",
-    "หวยฮานอย": "5. หวยฮานอย",
-    "หวยมาเลย์": "6. หวยมาเลย์",
-    "หวยหุ้นไทยเย็น": "7. หวยหุ้นไทยเย็น",
-    "หวยหุ้นนิเคอิบ่าย": "8. หวยหุ้นนิเคอิบ่าย",
-    "หวยหุ้นฮั่งเส็งบ่าย": "9. หวยหุ้นฮั่งเส็งบ่าย",
-    "หวยหุ้นจีนบ่าย": "10. หวยหุ้นจีนบ่าย",
+POSITION_LABELS = {
+
+    "H":
+        "💯 หลักร้อย 3 ตัวบน",
+
+    "T":
+        "🔟 หลักสิบ 3 ตัวบน",
+
+    "O":
+        "1️⃣ หลักหน่วย 3 ตัวบน",
+
+    "T2":
+        "🔽 หลักสิบ 2 ตัวล่าง",
+
+    "O2":
+        "⬇️ หลักหน่วย 2 ตัวล่าง"
 }
 
-DAY_MAP = {
-    "อัตโนมัติ (คำนวณจากงวดล่าสุด)": None,
-    "วันจันทร์": 0,
-    "วันอังคาร": 1,
-    "วันพุธ": 2,
-    "วันพฤหัสบดี": 3,
-    "วันศุกร์": 4,
-    "วันเสาร์": 5,
-    "วันอาทิตย์": 6,
-}
-
-DAY_NAMES = [
+DOW_NAMES = [
     "จันทร์",
     "อังคาร",
     "พุธ",
     "พฤหัสบดี",
     "ศุกร์",
     "เสาร์",
-    "อาทิตย์",
+    "อาทิตย์"
 ]
 
 
 # ============================================================
-# 8. COMMON HELPERS
-# ============================================================
-
-def safe_probability_array(values):
-    """
-    ทำ probability ให้เป็น numpy array 10 ค่า
-    """
-
-    arr = np.asarray(values, dtype=float).flatten()
-
-    if len(arr) == 10:
-        pass
-
-    elif len(arr) > 10:
-        arr = arr[:10]
-
-    else:
-        temp = np.zeros(10)
-        temp[:len(arr)] = arr
-        arr = temp
-
-    arr = np.nan_to_num(
-        arr,
-        nan=0.0,
-        posinf=0.0,
-        neginf=0.0
-    )
-
-    total = arr.sum()
-
-    if total <= 0:
-        return np.ones(10) / 10.0
-
-    return arr / total
-
-
-def top_numbers(probabilities, n=5):
-
-    probs = safe_probability_array(probabilities)
-
-    idx = np.argsort(probs)[::-1][:n]
-
-    return [
-        (int(i), float(probs[i]))
-        for i in idx
-    ]
-
-
-def dead_numbers(probabilities, n=7):
-
-    probs = safe_probability_array(probabilities)
-
-    idx = np.argsort(probs)[:n]
-
-    return [
-        (int(i), float(probs[i]))
-        for i in idx
-    ]
-
-
-def format_numbers(items):
-
-    return " - ".join(
-        str(number)
-        for number, _ in items
-    )
-
-
-def get_target_date(last_date, target_dow):
-
-    last_date = pd.to_datetime(last_date)
-
-    if target_dow is None:
-
-        return last_date + timedelta(days=7)
-
-    days_ahead = (
-        target_dow -
-        last_date.dayofweek
-    )
-
-    if days_ahead <= 0:
-        days_ahead += 7
-
-    return last_date + timedelta(
-        days=days_ahead
-    )
-
-
-# ============================================================
-# 9. LOAD V7 DATA
-# ============================================================
-
-@st.cache_data(
-    ttl=300,
-    show_spinner=False
-)
-def load_v7_data(lottery_key):
-
-    if V7_FETCH is None:
-        raise RuntimeError(
-            "ไม่พบ fetch_and_clean_data ใน V7"
-        )
-
-    url = V7_SOURCES.get(lottery_key)
-
-    if not url:
-        raise RuntimeError(
-            f"ไม่พบ URL ของ {lottery_key}"
-        )
-
-    df = V7_FETCH(url)
-
-    if df is None or df.empty:
-        raise RuntimeError(
-            "ไม่พบข้อมูลหวย"
-        )
-
-    return df.copy()
-
-
-# ============================================================
-# 10. LOAD DUB DATA
-# ============================================================
-
-@st.cache_data(
-    ttl=300,
-    show_spinner=False
-)
-def load_dub_data(lottery_name):
-
-    if DUB_SCRAPER is None:
-        raise RuntimeError(
-            "ไม่พบ LotteryScraper ใน V4"
-        )
-
-    scraper = DUB_SCRAPER()
-
-    df = scraper.fetch_data(
-        lottery_name
-    )
-
-    if df is None or df.empty:
-        raise RuntimeError(
-            "ไม่สามารถดึงข้อมูลเลขดับได้"
-        )
-
-    return df.copy()
-
-
-# ============================================================
-# 11. FIND V7 PREDICT METHOD
-# ============================================================
-
-def run_v7_engine(
-    df,
-    lottery_key,
-    target_dow
-):
-
-    if V7_ENGINE is None:
-
-        raise RuntimeError(
-            "ไม่พบ AI Engine ใน secret_lotto_v7_ai.py\n"
-            "ตรวจสอบชื่อ Class ของ PRO V7"
-        )
-
-    # --------------------------------------------------------
-    # พยายามสร้าง Engine ตามรูปแบบต่าง ๆ
-    # --------------------------------------------------------
-
-    engine = None
-
-    constructor_errors = []
-
-    constructors = [
-        lambda: V7_ENGINE(
-            df,
-            lottery_key,
-            target_dow=target_dow
-        ),
-        lambda: V7_ENGINE(
-            df,
-            lottery_key,
-            target_dow
-        ),
-        lambda: V7_ENGINE(
-            df,
-            lottery_key
-        ),
-        lambda: V7_ENGINE(df),
-    ]
-
-    for constructor in constructors:
-
-        try:
-            engine = constructor()
-            break
-
-        except Exception as e:
-            constructor_errors.append(
-                str(e)
-            )
-
-    if engine is None:
-
-        raise RuntimeError(
-            "สร้าง V7 AI Engine ไม่สำเร็จ\n\n"
-            + "\n".join(constructor_errors[-3:])
-        )
-
-    # --------------------------------------------------------
-    # หา predict method
-    # --------------------------------------------------------
-
-    prediction = None
-
-    for method_name in [
-        "predict_all",
-        "predict",
-        "analyze",
-        "run",
-    ]:
-
-        if hasattr(engine, method_name):
-
-            method = getattr(
-                engine,
-                method_name
-            )
-
-            try:
-
-                if method_name == "predict_all":
-                    prediction = method()
-
-                elif method_name == "predict":
-                    prediction = method()
-
-                elif method_name == "analyze":
-                    prediction = method()
-
-                else:
-                    prediction = method()
-
-                break
-
-            except TypeError:
-
-                try:
-                    prediction = method(
-                        target_dow
-                    )
-                    break
-
-                except Exception:
-                    continue
-
-    if prediction is None:
-
-        raise RuntimeError(
-            "ไม่พบฟังก์ชัน Prediction ของ PRO V7 AI"
-        )
-
-    # --------------------------------------------------------
-    # รองรับทั้ง
-    #
-    # predictions
-    #
-    # หรือ
-    #
-    # predictions, next_date
-    # --------------------------------------------------------
-
-    if isinstance(prediction, tuple):
-
-        predictions = prediction[0]
-
-        if len(prediction) >= 2:
-            next_date = prediction[1]
-        else:
-            next_date = None
-
-    else:
-
-        predictions = prediction
-        next_date = None
-
-    return engine, predictions, next_date
-
-
-# ============================================================
-# 12. NORMALIZE V7 RESULTS
-# ============================================================
-
-def extract_final_probs(position_result):
-
-    if position_result is None:
-        return np.ones(10) / 10
-
-    # กรณีเป็น dict
-    if isinstance(position_result, dict):
-
-        for key in [
-            "Final",
-            "final",
-            "AI",
-            "ai",
-            "Probs",
-            "probs",
-            "probabilities",
-        ]:
-
-            if key in position_result:
-
-                value = position_result[key]
-
-                # ถ้าเป็น list ของ (digit, prob)
-                if (
-                    isinstance(value, list)
-                    and len(value) > 0
-                    and isinstance(value[0], (tuple, list))
-                ):
-
-                    probs = np.zeros(10)
-
-                    for item in value:
-
-                        if len(item) >= 2:
-
-                            digit = int(item[0])
-                            prob = float(item[1])
-
-                            if 0 <= digit <= 9:
-                                probs[digit] = prob
-
-                    return safe_probability_array(
-                        probs
-                    )
-
-                return safe_probability_array(
-                    value
-                )
-
-    # กรณีเป็น array
-    try:
-
-        return safe_probability_array(
-            position_result
-        )
-
-    except Exception:
-
-        return np.ones(10) / 10
-
-
-# ============================================================
-# 13. FORMAT V7 POSITIONS
-# ============================================================
-
-POSITION_LABELS = {
-    "H": "💯 หลักร้อย (บน)",
-    "T": "🔟 หลักสิบ (บน)",
-    "O": "1️⃣ หลักหน่วย (บน)",
-    "T2": "🔽 หลักสิบ (ล่าง)",
-    "O2": "⬇️ หลักหน่วย (ล่าง)",
-}
-
-
-def get_v7_position(
-    predictions,
-    position
-):
-
-    if not isinstance(
-        predictions,
-        dict
-    ):
-        return np.ones(10) / 10
-
-    value = predictions.get(
-        position
-    )
-
-    if value is None:
-
-        # รองรับชื่ออื่น
-        aliases = {
-            "H": ["hundred", "top_hundred"],
-            "T": ["ten", "top_ten"],
-            "O": ["unit", "top_unit"],
-            "T2": ["bot_ten", "bottom_ten"],
-            "O2": ["bot_unit", "bottom_unit"],
-        }
-
-        for alias in aliases.get(
-            position,
-            []
-        ):
-
-            if alias in predictions:
-
-                value = predictions[
-                    alias
-                ]
-
-                break
-
-    return extract_final_probs(
-        value
-    )
-
-
-# ============================================================
-# 14. PRO V7 AI-ONLY ANALYSIS
-# ============================================================
-
-def run_prediction_v7(
-    selected_lotto,
-    day_input
-):
-
-    lottery_key = LOTTERY_MAP[
-        selected_lotto
-    ]
-
-    target_dow = DAY_MAP[
-        day_input
-    ]
-
-    df = load_v7_data(
-        lottery_key
-    )
-
-    engine, predictions, next_date = (
-        run_v7_engine(
-            df,
-            lottery_key,
-            target_dow
-        )
-    )
-
-    if next_date is None:
-
-        if "Date" in df.columns:
-
-            next_date = get_target_date(
-                df["Date"].iloc[-1],
-                target_dow
-            )
-
-        else:
-
-            next_date = pd.Timestamp.now()
-
-    result = {}
-
-    for position in POSITION_LABELS:
-
-        probs = get_v7_position(
-            predictions,
-            position
-        )
-
-        result[position] = {
-            "probs": probs,
-            "top5": top_numbers(
-                probs,
-                5
-            )
-        }
-
-    return (
-        result,
-        next_date,
-        engine,
-        len(df)
-    )
-
-
-# ============================================================
-# 15. CANDIDATE ELIMINATION
-# ============================================================
-
-def run_candidate_elimination(
-    selected_lotto,
-    day_input
-):
-
-    target_dow = DAY_MAP[
-        day_input
-    ]
-
-    df = load_dub_data(
-        selected_lotto
-    )
-
-    if DUB_ENGINE is None:
-        raise RuntimeError(
-            "ไม่พบ OptimizedEliminationSystemV4"
-        )
-
-    # --------------------------------------------------------
-    # คำนวณวันเป้าหมาย
-    # --------------------------------------------------------
-
-    last_date = pd.to_datetime(
-        df["date"].iloc[-1]
-    )
-
-    target_date = get_target_date(
-        last_date,
-        target_dow
-    )
-
-    actual_dow = target_date.dayofweek
-
-    # --------------------------------------------------------
-    # สถานะระบบ
-    # --------------------------------------------------------
-
-    try:
-
-        status_engine = DUB_ENGINE(
-            df,
-            "hundred",
-            selected_lotto
-        )
-
-        mode_name = getattr(
-            status_engine,
-            "mode_name",
-            "Candidate Elimination"
-        )
-
-    except Exception:
-
-        mode_name = (
-            "Candidate Elimination"
-        )
-
-    # --------------------------------------------------------
-    # ตำแหน่ง
-    # --------------------------------------------------------
-
-    positions = {
-        "💯 3 ตัวบน (ร้อย)": "hundred",
-        "🔟 3 ตัวบน (สิบ)": "ten",
-        "1️⃣ 3 ตัวบน (หน่วย)": "unit",
-        "🔽 2 ตัวล่าง (สิบ)": "bot_ten",
-        "⬇️ 2 ตัวล่าง (หน่วย)": "bot_unit",
-    }
-
-    results = {}
-
-    for label, column in positions.items():
-
-        try:
-
-            system = DUB_ENGINE(
-                df,
-                column,
-                selected_lotto
-            )
-
-            output = system.analyze(
-                actual_dow
-            )
-
-            if not output:
-                continue
-
-            final_probs = output.get(
-                "final"
-            )
-
-            if final_probs is None:
-
-                final_probs = output.get(
-                    "Final"
-                )
-
-            if final_probs is None:
-                continue
-
-            final_probs = safe_probability_array(
-                final_probs
-            )
-
-            results[label] = {
-                "dead": dead_numbers(
-                    final_probs,
-                    7
-                ),
-                "probs": final_probs,
-            }
-
-        except Exception:
-            continue
-
-    return (
-        results,
-        target_date,
-        mode_name,
-        len(df)
-    )
-
-
-# ============================================================
-# 16. CSS
+# 4. CSS
 # ============================================================
 
 def inject_css():
@@ -852,115 +154,104 @@ def inject_css():
         <style>
 
         .stApp {
-            background:
-                linear-gradient(
-                    180deg,
-                    #f8fafc 0%,
-                    #eef2ff 100%
-                );
+            background: #f8fafc;
         }
 
         .main-title {
-            text-align:center;
-            font-size:2.8rem;
-            font-weight:900;
-            margin-bottom:5px;
-            background:
-                linear-gradient(
-                    90deg,
-                    #2563eb,
-                    #7c3aed,
-                    #db2777
-                );
-            -webkit-background-clip:text;
-            -webkit-text-fill-color:transparent;
+            text-align: center;
+            font-size: 2.7rem;
+            font-weight: 900;
+            margin-bottom: 3px;
+            background: linear-gradient(
+                90deg,
+                #2563eb,
+                #7c3aed,
+                #db2777
+            );
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
         }
 
-        .sub-title {
-            text-align:center;
-            color:#475569;
-            font-size:1rem;
-            margin-bottom:20px;
+        .subtitle {
+            text-align: center;
+            color: #64748b;
+            font-size: 1rem;
+            margin-bottom: 20px;
         }
 
-        .panel {
-            padding:20px;
-            border-radius:18px;
-            margin-top:15px;
-            margin-bottom:20px;
-            box-shadow:
-                0 5px 15px
-                rgba(15,23,42,0.08);
+        .status-card {
+            background: #eff6ff;
+            border: 1px solid #bfdbfe;
+            border-radius: 14px;
+            padding: 15px;
+            text-align: center;
+            color: #1e40af;
+            font-weight: 700;
+            line-height: 1.8;
         }
 
-        .panel-ai {
-            background:#f0fdf4;
-            border-left:8px solid #22c55e;
+        .hot-card {
+            background: #f0fdf4;
+            border-left: 7px solid #16a34a;
+            border-radius: 14px;
+            padding: 18px;
+            margin: 12px 0;
         }
 
-        .panel-dub {
-            background:#fef2f2;
-            border-left:8px solid #ef4444;
+        .dead-card {
+            background: #fef2f2;
+            border-left: 7px solid #dc2626;
+            border-radius: 14px;
+            padding: 18px;
+            margin: 12px 0;
         }
 
-        .result-header {
-            font-size:1.9rem;
-            font-weight:900;
-            margin-bottom:5px;
+        .position-title {
+            font-size: 1.35rem;
+            font-weight: 900;
+            color: #334155;
+            margin-bottom: 8px;
         }
 
-        .result-sub {
-            font-size:0.95rem;
-            color:#64748b;
-            margin-bottom:15px;
-        }
-
-        .position {
-            font-size:1.35rem;
-            font-weight:800;
-            margin-top:18px;
-            margin-bottom:7px;
-        }
-
-        .number-box {
-            background:white;
-            border-radius:12px;
-            padding:13px;
-            text-align:center;
-            border:2px dashed #cbd5e1;
-        }
-
-        .ai-number {
-            font-size:2.2rem;
-            font-weight:900;
-            color:#16a34a;
-            letter-spacing:3px;
+        .hot-number {
+            font-size: 2.3rem;
+            font-weight: 900;
+            color: #16a34a;
+            letter-spacing: 3px;
+            text-align: center;
         }
 
         .dead-number {
-            font-size:2.2rem;
-            font-weight:900;
-            color:#dc2626;
-            letter-spacing:3px;
+            font-size: 2.3rem;
+            font-weight: 900;
+            color: #dc2626;
+            letter-spacing: 3px;
+            text-align: center;
         }
 
-        .badge {
-            display:inline-block;
-            padding:5px 10px;
-            border-radius:20px;
-            font-size:0.85rem;
-            font-weight:700;
-            margin-top:5px;
+        .prob-text {
+            text-align: center;
+            color: #64748b;
+            font-size: 0.85rem;
+            margin-top: 5px;
         }
 
-        .badge-ai {
-            background:#dcfce7;
-            color:#166534;
+        .model-badge {
+            text-align: center;
+            background: white;
+            border-radius: 10px;
+            padding: 8px;
+            margin-top: 8px;
+            color: #475569;
+            font-weight: 700;
         }
 
-        .badge-dub {
-            background:#fee2e2;
-            color:#991b1b;
+        div.stButton > button {
+            width: 100%;
+            min-height: 48px;
+            border-radius: 10px;
+            font-size: 17px;
+            font-weight: 800;
         }
 
         </style>
@@ -970,142 +261,1351 @@ def inject_css():
 
 
 # ============================================================
-# 17. RENDER AI RESULT
+# 5. DATE PARSER
 # ============================================================
 
-def render_ai_result(
-    result,
-    next_date,
-    engine,
-    data_count
-):
+THAI_MONTHS = {
+    "มกราคม": 1,
+    "กุมภาพันธ์": 2,
+    "มีนาคม": 3,
+    "เมษายน": 4,
+    "พฤษภาคม": 5,
+    "มิถุนายน": 6,
+    "กรกฎาคม": 7,
+    "สิงหาคม": 8,
+    "กันยายน": 9,
+    "ตุลาคม": 10,
+    "พฤศจิกายน": 11,
+    "ธันวาคม": 12,
 
-    engine_name = engine.__class__.__name__
+    "ม.ค.": 1,
+    "ก.พ.": 2,
+    "มี.ค.": 3,
+    "เม.ย.": 4,
+    "พ.ค.": 5,
+    "มิ.ย.": 6,
+    "ก.ค.": 7,
+    "ส.ค.": 8,
+    "ก.ย.": 9,
+    "ต.ค.": 10,
+    "พ.ย.": 11,
+    "ธ.ค.": 12,
+}
 
-    html = f"""
-    <div class="panel panel-ai">
 
-        <div class="result-header">
-            🎯 PRO V7 AI-ONLY
-        </div>
+def normalize_date(value):
 
-        <div class="result-sub">
-            วันที่เป้าหมาย:
-            {next_date.strftime("%d/%m/%Y")}
-            |
-            ข้อมูล:
-            {data_count} งวด
-            |
-            Engine:
-            {engine_name}
-        </div>
+    if value is None:
+        return None
 
-        <span class="badge badge-ai">
-            🤖 AI-ONLY
-        </span>
-    """
+    text = str(value).strip()
 
-    for position, label in POSITION_LABELS.items():
+    # -----------------------------------------
+    # Thai month
+    # -----------------------------------------
 
-        items = result[
-            position
-        ]["top5"]
+    for month_name, month_num in THAI_MONTHS.items():
 
-        numbers = format_numbers(
-            items
+        pattern = (
+            rf"(\d{{1,2}})\s*"
+            rf"{re.escape(month_name)}\s*"
+            rf"(\d{{4}})"
         )
 
-        html += f"""
-        <div class="position">
-            {label}
-        </div>
+        match = re.search(
+            pattern,
+            text
+        )
 
-        <div class="number-box">
+        if match:
 
-            🌟 <b>เด่น AI ฟันธง</b><br>
+            day = int(match.group(1))
+            year = int(match.group(2))
 
-            <span class="ai-number">
-                {numbers}
-            </span>
+            if year >= 2400:
+                year -= 543
 
-        </div>
-        """
+            try:
+                return pd.Timestamp(
+                    year,
+                    month_num,
+                    day
+                )
+            except Exception:
+                return None
 
-    html += "</div>"
+    # -----------------------------------------
+    # Numeric date
+    # -----------------------------------------
+
+    match = re.search(
+        r"(\d{1,4})[/-](\d{1,2})[/-](\d{2,4})",
+        text
+    )
+
+    if match:
+
+        a = int(match.group(1))
+        b = int(match.group(2))
+        c = int(match.group(3))
+
+        try:
+
+            if a >= 1000:
+
+                year = a
+                month = b
+                day = c
+
+            else:
+
+                day = a
+                month = b
+                year = c
+
+                if year < 100:
+                    year += 2000
+
+                if year >= 2400:
+                    year -= 543
+
+            return pd.Timestamp(
+                year,
+                month,
+                day
+            )
+
+        except Exception:
+            return None
+
+    return None
+
+
+# ============================================================
+# 6. FETCH LOTTERY DATA
+# ============================================================
+
+@st.cache_data(
+    ttl=300,
+    show_spinner=False
+)
+def fetch_lottery_data(url):
+
+    headers = {
+        "User-Agent":
+        "Mozilla/5.0 "
+        "(Linux; Android 10) "
+        "AppleWebKit/537.36 "
+        "(KHTML, like Gecko) "
+        "Chrome/120.0 Mobile Safari/537.36"
+    }
+
+    try:
+
+        response = requests.get(
+            url,
+            headers=headers,
+            timeout=12
+        )
+
+        response.raise_for_status()
+
+        soup = BeautifulSoup(
+            response.text,
+            "html.parser"
+        )
+
+        content = soup.find(
+            "div",
+            class_=re.compile(
+                r"post-body|entry-content|post-content|content"
+            )
+        )
+
+        if content is None:
+            content = soup
+
+        lines = content.get_text(
+            separator="\n"
+        ).split("\n")
+
+        extracted = []
+
+        current_date = None
+
+        # -----------------------------------------
+        # Main parser
+        # -----------------------------------------
+
+        for raw in lines:
+
+            line = raw.strip()
+
+            if not line:
+                continue
+
+            parsed_date = normalize_date(
+                line
+            )
+
+            if parsed_date is not None:
+                current_date = parsed_date
+
+            # 3 digit + 2 digit
+            match = re.search(
+                r"\b(\d{3})\b.*?\b(\d{2})\b",
+                line
+            )
+
+            if (
+                match
+                and current_date is not None
+            ):
+
+                extracted.append(
+                    {
+                        "Date": current_date,
+                        "Result_3D": match.group(1),
+                        "Result_2D": match.group(2)
+                    }
+                )
+
+        df = pd.DataFrame(
+            extracted
+        )
+
+        if df.empty:
+            return pd.DataFrame()
+
+        # -----------------------------------------
+        # Clean
+        # -----------------------------------------
+
+        df["Date"] = pd.to_datetime(
+            df["Date"],
+            errors="coerce"
+        )
+
+        df["Result_3D"] = (
+            df["Result_3D"]
+            .astype(str)
+            .str.extract(
+                r"(\d{3})"
+            )[0]
+        )
+
+        df["Result_2D"] = (
+            df["Result_2D"]
+            .astype(str)
+            .str.extract(
+                r"(\d{2})"
+            )[0]
+        )
+
+        df = df.dropna(
+            subset=[
+                "Date",
+                "Result_3D",
+                "Result_2D"
+            ]
+        )
+
+        df["Result_3D"] = (
+            df["Result_3D"]
+            .astype(str)
+            .str.zfill(3)
+        )
+
+        df["Result_2D"] = (
+            df["Result_2D"]
+            .astype(str)
+            .str.zfill(2)
+        )
+
+        df = (
+            df.drop_duplicates(
+                subset=[
+                    "Date",
+                    "Result_3D",
+                    "Result_2D"
+                ]
+            )
+            .sort_values(
+                "Date"
+            )
+            .reset_index(drop=True)
+        )
+
+        return df
+
+    except Exception:
+        return pd.DataFrame()
+
+
+# ============================================================
+# 7. BUILD FEATURES
+# ============================================================
+
+def build_features(df):
+
+    work = df.copy()
+
+    # -----------------------------------------
+    # Digits
+    # -----------------------------------------
+
+    work["H"] = (
+        work["Result_3D"]
+        .str[0]
+        .astype(int)
+    )
+
+    work["T"] = (
+        work["Result_3D"]
+        .str[1]
+        .astype(int)
+    )
+
+    work["O"] = (
+        work["Result_3D"]
+        .str[2]
+        .astype(int)
+    )
+
+    work["T2"] = (
+        work["Result_2D"]
+        .str[0]
+        .astype(int)
+    )
+
+    work["O2"] = (
+        work["Result_2D"]
+        .str[1]
+        .astype(int)
+    )
+
+    # -----------------------------------------
+    # Calendar features
+    # These are features only, NOT another system
+    # -----------------------------------------
+
+    work["DOW"] = (
+        work["Date"].dt.dayofweek
+    )
+
+    work["DAY"] = (
+        work["Date"].dt.day
+    )
+
+    work["MONTH"] = (
+        work["Date"].dt.month
+    )
+
+    work["DOW_SIN"] = np.sin(
+        2 * np.pi * work["DOW"] / 7
+    )
+
+    work["DOW_COS"] = np.cos(
+        2 * np.pi * work["DOW"] / 7
+    )
+
+    work["MONTH_SIN"] = np.sin(
+        2 * np.pi * work["MONTH"] / 12
+    )
+
+    work["MONTH_COS"] = np.cos(
+        2 * np.pi * work["MONTH"] / 12
+    )
+
+    # -----------------------------------------
+    # Global numeric features
+    # -----------------------------------------
+
+    work["SUM3"] = (
+        work["H"]
+        + work["T"]
+        + work["O"]
+    )
+
+    work["SUM2"] = (
+        work["T2"]
+        + work["O2"]
+    )
+
+    work["RANGE3"] = (
+        work[
+            ["H", "T", "O"]
+        ].max(axis=1)
+        -
+        work[
+            ["H", "T", "O"]
+        ].min(axis=1)
+    )
+
+    # -----------------------------------------
+    # Position features
+    # -----------------------------------------
+
+    for pos in POSITIONS:
+
+        # lags
+        for lag in range(1, 6):
+
+            work[
+                f"{pos}_L{lag}"
+            ] = (
+                work[pos]
+                .shift(lag)
+            )
+
+        # rolling
+        work[
+            f"{pos}_M5"
+        ] = (
+            work[pos]
+            .shift(1)
+            .rolling(5)
+            .mean()
+        )
+
+        work[
+            f"{pos}_M10"
+        ] = (
+            work[pos]
+            .shift(1)
+            .rolling(10)
+            .mean()
+        )
+
+        work[
+            f"{pos}_S5"
+        ] = (
+            work[pos]
+            .shift(1)
+            .rolling(5)
+            .std()
+        )
+
+        # difference
+        work[
+            f"{pos}_D1"
+        ] = (
+            work[pos]
+            .shift(1)
+            -
+            work[pos]
+            .shift(2)
+        )
+
+        work[
+            f"{pos}_D2"
+        ] = (
+            work[pos]
+            .shift(2)
+            -
+            work[pos]
+            .shift(3)
+        )
+
+        # odd/even
+        previous = (
+            work[pos]
+            .shift(1)
+        )
+
+        work[
+            f"{pos}_ODD"
+        ] = (
+            previous
+            .fillna(0)
+            .astype(int)
+            % 2
+        )
+
+        # high/low
+        work[
+            f"{pos}_HIGH"
+        ] = (
+            previous
+            .fillna(0)
+            .astype(int)
+            >= 5
+        ).astype(int)
+
+        # mirror
+        work[
+            f"{pos}_MIRROR"
+        ] = (
+            (
+                previous
+                .fillna(0)
+                .astype(int)
+                + 5
+            )
+            % 10
+        )
+
+    work = work.replace(
+        [np.inf, -np.inf],
+        np.nan
+    )
+
+    work = work.fillna(0)
+
+    return work
+
+
+# ============================================================
+# 8. FEATURE LIST
+# ============================================================
+
+BASE_FEATURES = [
+    "DOW",
+    "DAY",
+    "MONTH",
+    "DOW_SIN",
+    "DOW_COS",
+    "MONTH_SIN",
+    "MONTH_COS",
+    "SUM3",
+    "SUM2",
+    "RANGE3"
+]
+
+FEATURES = list(
+    BASE_FEATURES
+)
+
+for pos in POSITIONS:
+
+    FEATURES.extend(
+        [
+            f"{pos}_L1",
+            f"{pos}_L2",
+            f"{pos}_L3",
+            f"{pos}_L4",
+            f"{pos}_L5",
+            f"{pos}_M5",
+            f"{pos}_M10",
+            f"{pos}_S5",
+            f"{pos}_D1",
+            f"{pos}_D2",
+            f"{pos}_ODD",
+            f"{pos}_HIGH",
+            f"{pos}_MIRROR"
+        ]
+    )
+
+
+# ============================================================
+# 9. DATA HASH
+# ============================================================
+
+def get_data_hash(df):
+
+    hashed = pd.util.hash_pandas_object(
+        df[
+            [
+                "Date",
+                "Result_3D",
+                "Result_2D"
+            ]
+        ],
+        index=False
+    ).values
+
+    return hashlib.md5(
+        hashed.tobytes()
+    ).hexdigest()
+
+
+# ============================================================
+# 10. ADAPTIVE CONFIG
+# ============================================================
+
+def get_adaptive_config(n):
+
+    # Mobile optimized
+    if n >= 700:
+
+        return {
+            "backtest": 12,
+            "trees": 100,
+            "depth": 8,
+            "leaf": 2
+        }
+
+    if n >= 400:
+
+        return {
+            "backtest": 12,
+            "trees": 80,
+            "depth": 7,
+            "leaf": 2
+        }
+
+    if n >= 200:
+
+        return {
+            "backtest": 10,
+            "trees": 60,
+            "depth": 6,
+            "leaf": 2
+        }
+
+    return {
+        "backtest": 8,
+        "trees": 45,
+        "depth": 5,
+        "leaf": 2
+    }
+
+
+# ============================================================
+# 11. MODEL FACTORY
+# ============================================================
+
+def create_model(
+    model_name,
+    config
+):
+
+    trees = config["trees"]
+    depth = config["depth"]
+    leaf = config["leaf"]
+
+    if model_name == "ExtraTrees":
+
+        return ExtraTreesClassifier(
+            n_estimators=trees,
+            max_depth=depth,
+            min_samples_leaf=leaf,
+            max_features="sqrt",
+            class_weight="balanced",
+            n_jobs=-1,
+            random_state=42
+        )
+
+    if model_name == "RandomForest":
+
+        return RandomForestClassifier(
+            n_estimators=trees,
+            max_depth=depth,
+            min_samples_leaf=leaf,
+            max_features="sqrt",
+            class_weight="balanced",
+            n_jobs=-1,
+            random_state=42
+        )
+
+    if model_name == "HistGradientBoosting":
+
+        return HistGradientBoostingClassifier(
+            max_iter=max(
+                35,
+                int(trees * 0.65)
+            ),
+            max_leaf_nodes=15,
+            learning_rate=0.05,
+            l2_regularization=0.5,
+            random_state=42
+        )
+
+    raise ValueError(
+        f"Unknown model: {model_name}"
+    )
+
+
+# ============================================================
+# 12. PROBABILITY VECTOR
+# ============================================================
+
+def probability_vector(
+    model,
+    X
+):
+
+    raw = model.predict_proba(
+        X
+    )[0]
+
+    output = np.zeros(
+        10,
+        dtype=float
+    )
+
+    for cls, prob in zip(
+        model.classes_,
+        raw
+    ):
+
+        cls = int(cls)
+
+        if 0 <= cls <= 9:
+            output[cls] = float(prob)
+
+    total = output.sum()
+
+    if total <= 0:
+
+        return np.ones(10) / 10
+
+    return output / total
+
+
+# ============================================================
+# 13. METRICS
+# ============================================================
+
+def calculate_metrics(
+    probabilities,
+    actual
+):
+
+    ranking = np.argsort(
+        probabilities
+    )[::-1]
+
+    top1 = (
+        actual
+        in ranking[:1]
+    )
+
+    top3 = (
+        actual
+        in ranking[:3]
+    )
+
+    top5 = (
+        actual
+        in ranking[:5]
+    )
+
+    # Dead-7 means actual digit is inside
+    # the 7 lowest probability digits.
+    dead7 = (
+        actual
+        in np.argsort(
+            probabilities
+        )[:7]
+    )
+
+    # Log loss
+    p = float(
+        probabilities[
+            int(actual)
+        ]
+    )
+
+    p = max(
+        p,
+        1e-9
+    )
+
+    logloss = -np.log(p)
+
+    return {
+        "top1": int(top1),
+        "top3": int(top3),
+        "top5": int(top5),
+        "dead7": int(dead7),
+        "logloss": float(logloss)
+    }
+
+
+# ============================================================
+# 14. FAST WALK-FORWARD BACKTEST
+# ============================================================
+
+@st.cache_data(
+    ttl=600,
+    show_spinner=False
+)
+def adaptive_backtest(
+    df_features,
+    position,
+    data_hash,
+    config
+):
+
+    if len(df_features) < 50:
+
+        return {
+            "best_model": "ExtraTrees",
+            "scores": {},
+            "tests": 0
+        }
+
+    models = [
+        "ExtraTrees",
+        "RandomForest",
+        "HistGradientBoosting"
+    ]
+
+    X = df_features[
+        FEATURES
+    ].copy()
+
+    y = (
+        df_features[position]
+        .astype(int)
+        .copy()
+    )
+
+    # -----------------------------------------
+    # Last N genuine historical observations
+    # -----------------------------------------
+
+    n_test = min(
+        config["backtest"],
+        len(df_features) - 30
+    )
+
+    start = (
+        len(df_features)
+        - n_test
+    )
+
+    scores = {}
+
+    # -----------------------------------------
+    # Each candidate is tested independently
+    # -----------------------------------------
+
+    for model_name in models:
+
+        top1_hits = 0
+        top3_hits = 0
+        top5_hits = 0
+        dead7_hits = 0
+        total_logloss = 0.0
+        tests = 0
+
+        for test_idx in range(
+            start,
+            len(df_features)
+        ):
+
+            train_end = test_idx
+
+            if train_end < 25:
+                continue
+
+            X_train = X.iloc[
+                :train_end
+            ]
+
+            y_train = y.iloc[
+                :train_end
+            ]
+
+            X_test = X.iloc[
+                [test_idx]
+            ]
+
+            actual = int(
+                y.iloc[test_idx]
+            )
+
+            # Need at least 2 classes
+            if y_train.nunique() < 2:
+                continue
+
+            model = create_model(
+                model_name,
+                config
+            )
+
+            try:
+
+                model.fit(
+                    X_train,
+                    y_train
+                )
+
+                probs = probability_vector(
+                    model,
+                    X_test
+                )
+
+                metrics = calculate_metrics(
+                    probs,
+                    actual
+                )
+
+                top1_hits += metrics["top1"]
+                top3_hits += metrics["top3"]
+                top5_hits += metrics["top5"]
+                dead7_hits += metrics["dead7"]
+                total_logloss += metrics["logloss"]
+
+                tests += 1
+
+            except Exception:
+                continue
+
+        if tests == 0:
+
+            scores[
+                model_name
+            ] = {
+                "top1": 0.0,
+                "top3": 0.0,
+                "top5": 0.0,
+                "dead7": 0.0,
+                "logloss": 99.0,
+                "tests": 0,
+                "score": -999
+            }
+
+            continue
+
+        top1 = (
+            top1_hits / tests
+        )
+
+        top3 = (
+            top3_hits / tests
+        )
+
+        top5 = (
+            top5_hits / tests
+        )
+
+        dead7 = (
+            dead7_hits / tests
+        )
+
+        logloss = (
+            total_logloss / tests
+        )
+
+        # -----------------------------------------
+        # Adaptive score
+        #
+        # Top5 is important because 10-class
+        # exact prediction is extremely difficult.
+        #
+        # LogLoss penalizes overconfidence.
+        # -----------------------------------------
+
+        score = (
+            top1 * 0.30
+            +
+            top3 * 0.25
+            +
+            top5 * 0.30
+            +
+            dead7 * 0.05
+            +
+            max(
+                0,
+                1 / (1 + logloss)
+            ) * 0.10
+        )
+
+        scores[
+            model_name
+        ] = {
+            "top1": top1,
+            "top3": top3,
+            "top5": top5,
+            "dead7": dead7,
+            "logloss": logloss,
+            "tests": tests,
+            "score": score
+        }
+
+    # -----------------------------------------
+    # Select best
+    # -----------------------------------------
+
+    if not scores:
+
+        best_model = "ExtraTrees"
+
+    else:
+
+        best_model = max(
+            scores,
+            key=lambda x:
+                scores[x]["score"]
+        )
+
+    return {
+        "best_model": best_model,
+        "scores": scores,
+        "tests": max(
+            [
+                v["tests"]
+                for v in scores.values()
+            ],
+            default=0
+        )
+    }
+
+
+# ============================================================
+# 15. FINAL MODEL CACHE
+# ============================================================
+
+@st.cache_resource(
+    show_spinner=False
+)
+def train_final_model(
+    X_train,
+    y_train,
+    model_name,
+    config,
+    lottery_name,
+    position,
+    data_hash
+):
+
+    model = create_model(
+        model_name,
+        config
+    )
+
+    model.fit(
+        X_train,
+        y_train
+    )
+
+    return model
+
+
+# ============================================================
+# 16. FINAL PREDICTION
+# ============================================================
+
+def final_prediction(
+    df_features,
+    position,
+    selected_model,
+    config,
+    lottery_name,
+    data_hash
+):
+
+    X = df_features[
+        FEATURES
+    ].copy()
+
+    y = (
+        df_features[position]
+        .astype(int)
+    )
+
+    # Last row is the target/dummy row
+    X_train = X.iloc[
+        :-1
+    ].copy()
+
+    y_train = y.iloc[
+        :-1
+    ].copy()
+
+    X_next = X.iloc[
+        [-1]
+    ].copy()
+
+    # Remove first rows with weak lag information
+    start = min(
+        10,
+        max(
+            0,
+            len(X_train) - 20
+        )
+    )
+
+    X_train = X_train.iloc[
+        start:
+    ]
+
+    y_train = y_train.iloc[
+        start:
+    ]
+
+    model = train_final_model(
+        X_train,
+        y_train,
+        selected_model,
+        config,
+        lottery_name,
+        position,
+        data_hash
+    )
+
+    probabilities = probability_vector(
+        model,
+        X_next
+    )
+
+    hot_idx = np.argsort(
+        probabilities
+    )[::-1][:5]
+
+    dead_idx = np.argsort(
+        probabilities
+    )[:7]
+
+    hot = [
+        (
+            int(i),
+            float(probabilities[i])
+        )
+        for i in hot_idx
+    ]
+
+    dead = [
+        (
+            int(i),
+            float(probabilities[i])
+        )
+        for i in dead_idx
+    ]
+
+    return {
+        "model": selected_model,
+        "probabilities": probabilities,
+        "hot": hot,
+        "dead": dead
+    }
+
+
+# ============================================================
+# 17. TARGET DATE
+# ============================================================
+
+def calculate_target_date(
+    df,
+    selected_day
+):
+
+    last_date = pd.Timestamp(
+        df["Date"].iloc[-1]
+    )
+
+    day_map = {
+        "อัตโนมัติ": None,
+        "วันจันทร์": 0,
+        "วันอังคาร": 1,
+        "วันพุธ": 2,
+        "วันพฤหัสบดี": 3,
+        "วันศุกร์": 4,
+        "วันเสาร์": 5,
+        "วันอาทิตย์": 6
+    }
+
+    target_dow = day_map[
+        selected_day
+    ]
+
+    if target_dow is None:
+
+        if len(df) >= 2:
+
+            gap = (
+                last_date
+                -
+                pd.Timestamp(
+                    df["Date"].iloc[-2]
+                )
+            ).days
+
+            if gap <= 0:
+                gap = 7
+
+        else:
+
+            gap = 7
+
+        return (
+            last_date
+            + timedelta(days=gap)
+        )
+
+    days_ahead = (
+        target_dow
+        -
+        last_date.dayofweek
+    )
+
+    if days_ahead <= 0:
+        days_ahead += 7
+
+    return (
+        last_date
+        + timedelta(days=days_ahead)
+    )
+
+
+# ============================================================
+# 18. DISPLAY HOT
+# ============================================================
+
+def display_hot(
+    position,
+    result
+):
+
+    hot = result["hot"]
+
+    numbers = " - ".join(
+        str(num)
+        for num, _ in hot
+    )
+
+    probability_text = " | ".join(
+        f"{num}: {prob * 100:.1f}%"
+        for num, prob in hot
+    )
 
     st.markdown(
-        html,
+        f"""
+        <div class="hot-card">
+
+            <div class="position-title">
+                {POSITION_LABELS[position]}
+            </div>
+
+            <div class="hot-number">
+                {numbers}
+            </div>
+
+            <div class="prob-text">
+                AI Probability:
+                {probability_text}
+            </div>
+
+            <div class="model-badge">
+                🤖 Model: {result["model"]}
+            </div>
+
+        </div>
+        """,
         unsafe_allow_html=True
     )
 
 
 # ============================================================
-# 18. RENDER DUB RESULT
+# 19. DISPLAY DEAD
 # ============================================================
 
-def render_dub_result(
-    results,
-    target_date,
-    mode_name,
-    data_count
+def display_dead(
+    position,
+    result
 ):
 
-    html = f"""
-    <div class="panel panel-dub">
+    dead = result["dead"]
 
-        <div class="result-header">
-            🛑 PRO V7 Candidate Elimination
-        </div>
+    numbers = " - ".join(
+        str(num)
+        for num, _ in dead
+    )
 
-        <div class="result-sub">
-            วันที่เป้าหมาย:
-            {target_date.strftime("%d/%m/%Y")}
-            |
-            ข้อมูล:
-            {data_count} งวด
-            |
-            {mode_name}
-        </div>
-
-        <span class="badge badge-dub">
-            🛑 เลขดับ 7 ตัว
-        </span>
-    """
-
-    for label, data in results.items():
-
-        dead = data["dead"]
-
-        numbers = format_numbers(
-            dead
-        )
-
-        html += f"""
-        <div class="position">
-            {label}
-        </div>
-
-        <div class="number-box">
-
-            🛑 <b>ดับฟันธง 7 ตัว</b><br>
-
-            <span class="dead-number">
-                {numbers}
-            </span>
-
-        </div>
-        """
-
-    html += "</div>"
+    probability_text = " | ".join(
+        f"{num}: {prob * 100:.1f}%"
+        for num, prob in dead
+    )
 
     st.markdown(
-        html,
+        f"""
+        <div class="dead-card">
+
+            <div class="position-title">
+                {POSITION_LABELS[position]}
+            </div>
+
+            <div class="dead-number">
+                {numbers}
+            </div>
+
+            <div class="prob-text">
+                AI Probability ต่ำสุด:
+                {probability_text}
+            </div>
+
+            <div class="model-badge">
+                🤖 Model: {result["model"]}
+            </div>
+
+        </div>
+        """,
         unsafe_allow_html=True
     )
 
 
 # ============================================================
-# 19. MAIN
+# 20. DISPLAY BACKTEST
+# ============================================================
+
+def display_backtest(
+    position,
+    backtest
+):
+
+    st.markdown(
+        f"### {POSITION_LABELS[position]}"
+    )
+
+    if not backtest["scores"]:
+
+        st.warning(
+            "ไม่มีผล Backtest เพียงพอ"
+        )
+
+        return
+
+    rows = []
+
+    for model_name, score in (
+        backtest["scores"].items()
+    ):
+
+        rows.append(
+            {
+                "AI Model":
+                    model_name,
+
+                "Top-1":
+                    f"{score['top1'] * 100:.1f}%",
+
+                "Top-3":
+                    f"{score['top3'] * 100:.1f}%",
+
+                "Top-5":
+                    f"{score['top5'] * 100:.1f}%",
+
+                "Dead-7":
+                    f"{score['dead7'] * 100:.1f}%",
+
+                "LogLoss":
+                    f"{score['logloss']:.3f}",
+
+                "Adaptive Score":
+                    f"{score['score'] * 100:.1f}%",
+
+                "Tests":
+                    score["tests"]
+            }
+        )
+
+    st.dataframe(
+        pd.DataFrame(rows),
+        use_container_width=True,
+        hide_index=True
+    )
+
+    st.success(
+        f"🤖 AI ที่ระบบเลือก: "
+        f"**{backtest['best_model']}**"
+    )
+
+
+# ============================================================
+# 21. MAIN
 # ============================================================
 
 def main():
@@ -1115,203 +1615,470 @@ def main():
     st.markdown(
         """
         <div class="main-title">
-            ✨ LOTTO AI PRO V7
+            🤖 LOTTO AI PRO V7
         </div>
 
-        <div class="sub-title">
-            🤖 AI-ONLY Mobile Accuracy Edition
-            &nbsp; | &nbsp;
-            🛑 Candidate Elimination
+        <div class="subtitle">
+            ADAPTIVE • AI-ONLY • AUTO BACKTEST • MOBILE FAST
         </div>
         """,
         unsafe_allow_html=True
     )
 
     # --------------------------------------------------------
-    # Selectors
+    # Selection
     # --------------------------------------------------------
 
-    c1, c2 = st.columns(2)
+    col1, col2 = st.columns(2)
 
-    with c1:
+    with col1:
 
-        lotto = st.selectbox(
+        lottery = st.selectbox(
             "🏷️ เลือกประเภทหวย",
-            LOTTERY_LIST
+            list(
+                LOTTERY_SOURCES.keys()
+            )
         )
 
-    with c2:
+    with col2:
 
-        day = st.selectbox(
+        selected_day = st.selectbox(
             "📅 วันเป้าหมาย",
-            list(DAY_MAP.keys())
+            [
+                "อัตโนมัติ",
+                "วันจันทร์",
+                "วันอังคาร",
+                "วันพุธ",
+                "วันพฤหัสบดี",
+                "วันศุกร์",
+                "วันเสาร์",
+                "วันอาทิตย์"
+            ]
         )
 
     st.markdown("---")
 
     # --------------------------------------------------------
-    # Buttons
+    # Run
     # --------------------------------------------------------
 
-    c1, c2 = st.columns(2)
-
-    with c1:
-
-        btn_ai = st.button(
-            "🎯 วิเคราะห์เลขเด่น PRO V7 AI",
-            type="primary",
-            use_container_width=True
-        )
-
-    with c2:
-
-        btn_dub = st.button(
-            "🛑 วิเคราะห์เลขดับ 7 ตัว",
-            type="secondary",
-            use_container_width=True
-        )
-
-    # --------------------------------------------------------
-    # AI
-    # --------------------------------------------------------
-
-    if btn_ai:
-
-        with st.spinner(
-            "🤖 PRO V7 AI กำลังวิเคราะห์..."
-        ):
-
-            try:
-
-                result, next_date, engine, count = (
-                    run_prediction_v7(
-                        lotto,
-                        day
-                    )
-                )
-
-                st.session_state[
-                    "last_mode"
-                ] = "ai"
-
-                st.session_state[
-                    "ai_result"
-                ] = (
-                    result,
-                    next_date,
-                    engine,
-                    count
-                )
-
-            except Exception as e:
-
-                st.error(
-                    "❌ PRO V7 AI วิเคราะห์ไม่สำเร็จ\n\n"
-                    f"{type(e).__name__}: {e}"
-                )
-
-    # --------------------------------------------------------
-    # DUB
-    # --------------------------------------------------------
-
-    if btn_dub:
-
-        with st.spinner(
-            "🛑 Candidate Elimination กำลังคำนวณ..."
-        ):
-
-            try:
-
-                result, target_date, mode, count = (
-                    run_candidate_elimination(
-                        lotto,
-                        day
-                    )
-                )
-
-                if not result:
-
-                    st.warning(
-                        "⚠️ ระบบไม่สามารถสร้างผลเลขดับได้"
-                    )
-
-                else:
-
-                    st.session_state[
-                        "last_mode"
-                    ] = "dub"
-
-                    st.session_state[
-                        "dub_result"
-                    ] = (
-                        result,
-                        target_date,
-                        mode,
-                        count
-                    )
-
-            except Exception as e:
-
-                st.error(
-                    "❌ ระบบเลขดับทำงานไม่สำเร็จ\n\n"
-                    f"{type(e).__name__}: {e}"
-                )
-
-    # --------------------------------------------------------
-    # SHOW RESULT
-    # --------------------------------------------------------
-
-    mode = st.session_state.get(
-        "last_mode"
+    run = st.button(
+        "🚀 เริ่มวิเคราะห์ PRO V7 ADAPTIVE",
+        type="primary",
+        use_container_width=True
     )
 
-    if mode == "ai":
+    if not run:
+        st.info(
+            "เลือกหวยและวันเป้าหมาย แล้วกด "
+            "🚀 เริ่มวิเคราะห์"
+        )
+        return
 
-        data = st.session_state.get(
-            "ai_result"
+    url = LOTTERY_SOURCES[
+        lottery
+    ]
+
+    # --------------------------------------------------------
+    # FETCH
+    # --------------------------------------------------------
+
+    with st.spinner(
+        "📥 กำลังดึงข้อมูลย้อนหลัง..."
+    ):
+
+        df = fetch_lottery_data(
+            url
         )
 
-        if data:
+    if df.empty:
 
-            render_ai_result(
-                *data
+        st.error(
+            "❌ ดึงข้อมูลไม่ได้"
+        )
+
+        st.info(
+            "ตรวจสอบ URL ของแหล่งข้อมูล หรือกดใหม่อีกครั้ง"
+        )
+
+        return
+
+    if len(df) < 50:
+
+        st.error(
+            f"❌ พบข้อมูลเพียง {len(df)} งวด"
+        )
+
+        st.warning(
+            "PRO V7 Adaptive ต้องการข้อมูลอย่างน้อย 50 งวด "
+            "เพื่อทำ Backtest ได้เหมาะสม"
+        )
+
+        return
+
+    # --------------------------------------------------------
+    # Target date
+    # --------------------------------------------------------
+
+    target_date = calculate_target_date(
+        df,
+        selected_day
+    )
+
+    # --------------------------------------------------------
+    # Dummy target row
+    #
+    # IMPORTANT:
+    # The dummy result itself is never used as training data.
+    # Its previous values are used only for lag features.
+    # --------------------------------------------------------
+
+    dummy = pd.DataFrame(
+        [
+            {
+                "Date": target_date,
+                "Result_3D": "000",
+                "Result_2D": "00"
+            }
+        ]
+    )
+
+    extended = pd.concat(
+        [
+            df,
+            dummy
+        ],
+        ignore_index=True
+    )
+
+    # --------------------------------------------------------
+    # Features
+    # --------------------------------------------------------
+
+    with st.spinner(
+        "🧠 กำลังสร้าง AI Features..."
+    ):
+
+        feature_df = build_features(
+            extended
+        )
+
+    config = get_adaptive_config(
+        len(df)
+    )
+
+    data_hash = get_data_hash(
+        df
+    )
+
+    # --------------------------------------------------------
+    # BACKTEST
+    # --------------------------------------------------------
+
+    st.info(
+        f"⚡ Adaptive Backtest: "
+        f"{config['backtest']} งวดล่าสุด / "
+        f"{len(df):,} งวด"
+    )
+
+    backtest_results = {}
+
+    progress = st.progress(
+        0
+    )
+
+    for idx, position in enumerate(
+        POSITIONS
+    ):
+
+        backtest_results[position] = (
+            adaptive_backtest(
+                feature_df.iloc[:-1],
+                position,
+                data_hash,
+                config
+            )
+        )
+
+        progress.progress(
+            int(
+                (idx + 1)
+                / len(POSITIONS)
+                * 100
+            )
+        )
+
+    progress.empty()
+
+    # --------------------------------------------------------
+    # FINAL AI
+    # --------------------------------------------------------
+
+    with st.spinner(
+        "🤖 กำลัง Train AI รอบสุดท้าย..."
+    ):
+
+        final_results = {}
+
+        for position in POSITIONS:
+
+            selected_model = (
+                backtest_results[
+                    position
+                ]["best_model"]
             )
 
-    elif mode == "dub":
-
-        data = st.session_state.get(
-            "dub_result"
-        )
-
-        if data:
-
-            render_dub_result(
-                *data
+            final_results[position] = (
+                final_prediction(
+                    feature_df,
+                    position,
+                    selected_model,
+                    config,
+                    lottery,
+                    data_hash
+                )
             )
 
     # --------------------------------------------------------
-    # FOOTER
+    # STATUS
     # --------------------------------------------------------
+
+    selected_models = [
+        final_results[p]["model"]
+        for p in POSITIONS
+    ]
+
+    model_text = " | ".join(
+        selected_models
+    )
 
     st.markdown(
-        """
-        <div style="
-            text-align:center;
-            color:#94a3b8;
-            font-size:0.8rem;
-            margin-top:30px;
-        ">
-            LOTTO AI PRO V7
-            • AI-ONLY + Candidate Elimination
-            • Mobile Edition
+        f"""
+        <div class="status-card">
+
+        🤖 <b>PRO V7 AI-ONLY ADAPTIVE</b><br>
+
+        📊 ข้อมูลย้อนหลัง:
+        {len(df):,} งวด<br>
+
+        📅 งวดล่าสุด:
+        {df["Date"].iloc[-1].strftime("%d/%m/%Y")}<br>
+
+        🎯 งวดเป้าหมาย:
+        {target_date.strftime("%d/%m/%Y")}
+        ({DOW_NAMES[target_date.dayofweek]})<br>
+
+        🌳 Trees:
+        {config["trees"]}<br>
+
+        🔄 Backtest:
+        {config["backtest"]} งวด<br>
+
+        🧠 Models:
+        {model_text}
+
         </div>
         """,
         unsafe_allow_html=True
     )
 
+    st.write("")
+
+    # --------------------------------------------------------
+    # TABS
+    # --------------------------------------------------------
+
+    tab_hot, tab_dead, tab_accuracy = st.tabs(
+        [
+            "🎯 เลขเด่น AI",
+            "🛑 เลขดับ 7 ตัว",
+            "📊 Accuracy / Backtest"
+        ]
+    )
+
+    # ========================================================
+    # HOT
+    # ========================================================
+
+    with tab_hot:
+
+        st.subheader(
+            "🎯 AI TOP 5 — เลขเด่น"
+        )
+
+        st.caption(
+            "เรียงตามความน่าจะเป็นที่ AI ประเมินจากสูง → ต่ำ"
+        )
+
+        for position in POSITIONS:
+
+            display_hot(
+                position,
+                final_results[position]
+            )
+
+    # ========================================================
+    # DEAD
+    # ========================================================
+
+    with tab_dead:
+
+        st.subheader(
+            "🛑 AI BOTTOM 7 — เลขดับ"
+        )
+
+        st.warning(
+            "เลขดับ = 7 ตัวที่ AI ประเมินความน่าจะเป็นต่ำที่สุด "
+            "ไม่ได้หมายความว่าเลขเหล่านี้จะไม่ออกแน่นอน"
+        )
+
+        for position in POSITIONS:
+
+            display_dead(
+                position,
+                final_results[position]
+            )
+
+    # ========================================================
+    # ACCURACY
+    # ========================================================
+
+    with tab_accuracy:
+
+        st.subheader(
+            "📊 Auto Backtest / Accuracy"
+        )
+
+        st.caption(
+            "ระบบเลือกโมเดลแยกตามแต่ละหลัก "
+            "จากผลทดสอบย้อนหลัง"
+        )
+
+        for position in POSITIONS:
+
+            display_backtest(
+                position,
+                backtest_results[position]
+            )
+
+            st.write("")
+
+    # ========================================================
+    # SUMMARY
+    # ========================================================
+
+    with st.expander(
+        "📋 สรุปโมเดลที่เลือก"
+    ):
+
+        summary = []
+
+        for position in POSITIONS:
+
+            bt = (
+                backtest_results[
+                    position
+                ]
+            )
+
+            best = (
+                bt["best_model"]
+            )
+
+            best_score = (
+                bt["scores"]
+                .get(
+                    best,
+                    {}
+                )
+                .get(
+                    "score",
+                    0
+                )
+            )
+
+            summary.append(
+                {
+                    "ตำแหน่ง":
+                        POSITION_LABELS[position],
+
+                    "AI ที่เลือก":
+                        best,
+
+                    "Adaptive Score":
+                        f"{best_score * 100:.1f}%",
+
+                    "Top-1":
+                        f"{bt['scores'].get(best, {}).get('top1', 0) * 100:.1f}%",
+
+                    "Top-3":
+                        f"{bt['scores'].get(best, {}).get('top3', 0) * 100:.1f}%",
+
+                    "Top-5":
+                        f"{bt['scores'].get(best, {}).get('top5', 0) * 100:.1f}%",
+
+                    "Dead-7":
+                        f"{bt['scores'].get(best, {}).get('dead7', 0) * 100:.1f}%"
+                }
+            )
+
+        st.dataframe(
+            pd.DataFrame(summary),
+            use_container_width=True,
+            hide_index=True
+        )
+
+    # ========================================================
+    # DATA INFO
+    # ========================================================
+
+    with st.expander(
+        "🔧 System Information"
+    ):
+
+        st.write(
+            f"Lottery: {lottery}"
+        )
+
+        st.write(
+            f"Historical draws: {len(df):,}"
+        )
+
+        st.write(
+            f"Data Hash: {data_hash[:16]}..."
+        )
+
+        st.write(
+            "Engine: PRO V7 AI-ONLY Adaptive"
+        )
+
+        st.write(
+            "Models: ExtraTrees / RandomForest / HistGradientBoosting"
+        )
+
+        st.write(
+            "XGBoost: Disabled for Mobile Speed"
+        )
+
+        st.write(
+            "Frequency Engine: Disabled"
+        )
+
+        st.write(
+            "Markov Engine: Disabled"
+        )
+
+        st.write(
+            "External Formula Voting: Disabled"
+        )
+
+        st.write(
+            "Data Leakage Protection: Enabled"
+        )
+
 
 # ============================================================
-# 20. START
+# 22. RUN APP
 # ============================================================
 
 if __name__ == "__main__":
