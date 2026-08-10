@@ -44,7 +44,7 @@ def run_analysis_dub(target_lotto, dow_input_str):
     scraper = Scraper_Dub()
     df = scraper.fetch_data(target_lotto)
 
-    if df is None or df.empty: return "### ❌ ขัดข้อง: ไม่สามารถดึงข้อมูลได้"
+    if df is None or df.empty: return "<h3 style='color:red;'>❌ ขัดข้อง: ไม่สามารถดึงข้อมูลได้</h3>"
 
     sys_status = OptimizedEliminationSystemV4(df, 'hundred', target_lotto)
     last_date = df['date'].iloc[-1]
@@ -60,8 +60,11 @@ def run_analysis_dub(target_lotto, dow_input_str):
         target_dow = target_date.dayofweek
 
     dow_names = ["จันทร์", "อังคาร", "พุธ", "พฤหัสบดี", "ศุกร์", "เสาร์", "อาทิตย์"]
-    out = f"## 🛑 สรุปเลขดับ ประจำวัน{dow_names[target_dow]}ที่ {target_date.strftime('%d/%m/%Y')}\n"
-    out += f"*(สเตตัสระบบ: {sys_status.mode_name})*\n\n---\n"
+    
+    # ใช้ HTML ครอบเพื่อขยายขนาด
+    out = f"<div class='result-container result-dub'>"
+    out += f"<div class='res-header'>🛑 สรุปเลขดับ<br>ประจำวัน{dow_names[target_dow]}ที่ {target_date.strftime('%d/%m/%Y')}</div>"
+    out += f"<div class='res-sub'>(สเตตัสระบบ: {sys_status.mode_name})</div><hr style='border-color: #fca5a5;'>"
 
     positions = {'💯 3 ตัวบน (ร้อย)': 'hundred', '🔟 3 ตัวบน (สิบ)': 'ten', '1️⃣ 3 ตัวบน (หน่วย)': 'unit', '🔽 2 ตัวล่าง (สิบ)': 'bot_ten', '⬇️ 2 ตัวล่าง (หน่วย)': 'bot_unit'}
     
@@ -71,9 +74,11 @@ def run_analysis_dub(target_lotto, dow_input_str):
         if not results: continue
 
         dead_final = get_dead_numbers(results['final'], 7)
-        out += f"### {pos_th}\n"
-        out += f"> 🌟 **ดับฟันธง:** **`{format_dead_output(dead_final)}`**\n\n"
+        nums_final = format_dead_output(dead_final)
+        out += f"<div class='res-pos'>{pos_th}</div>"
+        out += f"<div class='res-num-box'>🌟 ดับฟันธง: <br><span class='dub-text'>{nums_final}</span></div>"
 
+    out += "</div>"
     return out
 
 # =========================================================
@@ -90,7 +95,7 @@ def run_prediction_den(selected_lotto, dow_input_str):
     url = Sources_Den[den_map[selected_lotto]]
     df_raw = fetch_den(url)
 
-    if df_raw is None or df_raw.empty: return "### ❌ ขัดข้อง: ไม่สามารถดึงข้อมูลได้", None
+    if df_raw is None or df_raw.empty: return "<h3 style='color:red;'>❌ ขัดข้อง: ไม่สามารถดึงข้อมูลได้</h3>", None
 
     engine = EnsembleEngine(df_raw, den_map[selected_lotto], target_dow=target_dow)
     preds, next_date = engine.predict_all()
@@ -98,13 +103,17 @@ def run_prediction_den(selected_lotto, dow_input_str):
     dow_names = ["จันทร์", "อังคาร", "พุธ", "พฤหัสบดี", "ศุกร์", "เสาร์", "อาทิตย์"]
     labels = {'H': '💯 หลักร้อย (บน)', 'T': '🔟 หลักสิบ (บน)', 'O': '1️⃣ หลักหน่วย (บน)', 'T2': '🔽 หลักสิบ (ล่าง)', 'O2': '⬇️ หลักหน่วย (ล่าง)'}
 
-    out = f"## 🎯 ผลการวิเคราะห์เลขเด่น ประจำวัน{dow_names[next_date.dayofweek]}ที่ {next_date.strftime('%d-%m-%Y')}\n"
-    out += f"*(สเตตัสระบบ: {engine.mode_name})*\n\n---\n"
+    # ใช้ HTML ครอบเพื่อขยายขนาด
+    out = f"<div class='result-container result-den'>"
+    out += f"<div class='res-header'>🎯 ผลการวิเคราะห์เลขเด่น<br>ประจำวัน{dow_names[next_date.dayofweek]}ที่ {next_date.strftime('%d-%m-%Y')}</div>"
+    out += f"<div class='res-sub'>(สเตตัสระบบ: {engine.mode_name})</div><hr style='border-color: #86efac;'>"
 
     for pos in ['H', 'T', 'O', 'T2', 'O2']:
         nums_final = " - ".join([str(num) for num, prob in preds[pos]['Final']])
-        out += f"### {labels[pos]}\n"
-        out += f"> 🌟 **เด่นฟันธง:** **`{nums_final}`**\n\n"
+        out += f"<div class='res-pos'>{labels[pos]}</div>"
+        out += f"<div class='res-num-box'>🌟 เด่นฟันธง: <br><span class='den-text'>{nums_final}</span></div>"
+
+    out += "</div>"
 
     fig = plt.figure(figsize=(10, 6))
     colors_list = ['#ef4444', '#f97316', '#22c55e', '#3b82f6', '#8b5cf6']
@@ -129,9 +138,7 @@ def inject_custom_css():
     st.markdown("""
     <style>
     /* ตกแต่งพื้นหลังแอป */
-    .stApp {
-        background-color: #f8fafc;
-    }
+    .stApp { background-color: #f8fafc; }
     
     /* ตกแต่ง Header แบบ Gradient */
     .title-text {
@@ -159,17 +166,79 @@ def inject_custom_css():
         box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1);
     }
     
-    /* บังคับเปลี่ยนสีช่อง Selectbox ใหม่ */
+    /* กล่องแสดงผลการวิเคราะห์ใหม่ (ใหญ่ชัดเจน) */
+    .result-container {
+        padding: 25px;
+        border-radius: 15px;
+        margin-top: 15px;
+        margin-bottom: 25px;
+        box-shadow: 0 4px 10px rgba(0,0,0,0.08);
+    }
+    .result-dub {
+        background-color: #fef2f2;
+        border-left: 8px solid #ef4444;
+        color: #7f1d1d;
+    }
+    .result-den {
+        background-color: #f0fdf4;
+        border-left: 8px solid #22c55e;
+        color: #14532d;
+    }
+    .res-header {
+        font-size: 2.2rem !important;
+        font-weight: 900;
+        margin-bottom: 5px;
+        line-height: 1.3;
+    }
+    .res-sub {
+        font-size: 1.1rem;
+        font-style: italic;
+        opacity: 0.8;
+        margin-bottom: 15px;
+    }
+    .res-pos {
+        font-size: 1.8rem;
+        font-weight: 800;
+        margin-top: 25px;
+        margin-bottom: 10px;
+        color: #334155;
+    }
+    .res-num-box {
+        font-size: 1.3rem;
+        font-weight: bold;
+        background-color: rgba(255,255,255,0.85);
+        padding: 15px 20px;
+        border-radius: 10px;
+        border: 2px dashed #cbd5e1;
+        text-align: center;
+    }
+    
+    /* ขนาดตัวเลขเฉพาะเจาะจง ให้ใหญ่สะใจ */
+    .dub-text {
+        font-size: 2.6rem;
+        font-weight: 900;
+        color: #dc2626;
+        letter-spacing: 3px;
+        display: block;
+        margin-top: 5px;
+    }
+    .den-text {
+        font-size: 2.6rem;
+        font-weight: 900;
+        color: #16a34a;
+        letter-spacing: 3px;
+        display: block;
+        margin-top: 5px;
+    }
+
     div[data-testid="stSelectbox"] > div > div {
-        background-color: #eff6ff !important; /* พื้นหลังสีฟ้าอ่อน */
-        border: 2px solid #93c5fd !important; /* กรอบสีฟ้า */
+        background-color: #eff6ff !important;
+        border: 2px solid #93c5fd !important;
         border-radius: 8px;
     }
     div[data-testid="stSelectbox"] > div > div:hover {
-        border: 2px solid #3b82f6 !important; /* กรอบเข้มขึ้นตอนเอาเมาส์ชี้ */
+        border: 2px solid #3b82f6 !important;
     }
-    
-    /* ปรับแต่งปุ่มกดให้อลังการขึ้น */
     div.stButton > button {
         border-radius: 8px;
         font-size: 18px;
@@ -192,7 +261,6 @@ def inject_custom_css():
 def main():
     st.set_page_config(page_title="Lotto AI All-in-One", page_icon="🎯", layout="wide")
     
-    # 🌟 จัดการ Session State เพื่อเก็บผลลัพธ์
     if 'analysis_mode' not in st.session_state:
         st.session_state.analysis_mode = None
     if 'result_text' not in st.session_state:
@@ -200,10 +268,8 @@ def main():
     if 'result_fig' not in st.session_state:
         st.session_state.result_fig = None
     
-    # ดึง CSS มาใช้
     inject_custom_css()
     
-    # ใช้ HTML สร้างหัวข้อสวยๆ
     st.markdown('<h1 class="title-text">✨ สูตรคำนวณ AI 🤖</h1>', unsafe_allow_html=True)
     
     st.markdown("""
@@ -213,7 +279,6 @@ def main():
     </div>
     """, unsafe_allow_html=True)
 
-    # แบ่งคอลัมน์สำหรับการเลือกข้อมูล
     c1, c2 = st.columns(2)
     with c1:
         lotto = st.selectbox(
@@ -228,7 +293,6 @@ def main():
 
     st.markdown("---")
 
-    # ส่วนนี้มีแค่ "ปุ่ม" ล้วนๆ ไม่มีการเขียนโค้ดโหลดข้อมูลตรงนี้ เพื่อไม่ให้เลย์เอาต์เบี้ยว
     col1, col2 = st.columns(2)
     with col1:
         btn_dub = st.button("🛑 เริ่มวิเคราะห์เลขดับ", type="primary", use_container_width=True)
@@ -236,12 +300,11 @@ def main():
         btn_den = st.button("🎯 เริ่มวิเคราะห์เลขเด่น", type="primary", use_container_width=True)
 
     # =========================================================
-    # 6. พื้นที่ประมวลผลและแสดงผล (ย้ายมาอยู่ล่างสุดเสมอ)
+    # 6. พื้นที่ประมวลผลและแสดงผล
     # =========================================================
-    bottom_area = st.container() # สร้างกล่องจำลองไว้ล่างสุด
+    bottom_area = st.container() 
     
     with bottom_area:
-        # ถ้าปุ่มเลขดับถูกกด -> แสดงตัวโหลดตรงนี้
         if btn_dub:
             with st.spinner("⏳ กำลังประมวลผลเลขดับ... กรุณารอสักครู่"):
                 result_dub = run_analysis_dub(lotto, day)
@@ -249,7 +312,6 @@ def main():
                 st.session_state.result_text = result_dub
                 st.session_state.result_fig = None
                 
-        # ถ้าปุ่มเลขเด่นถูกกด -> แสดงตัวโหลดตรงนี้
         elif btn_den:
             with st.spinner("⏳ กำลังประมวลผลเลขเด่น... กรุณารอสักครู่"):
                 text, fig = run_prediction_den(lotto, day)
@@ -257,16 +319,15 @@ def main():
                 st.session_state.result_text = text
                 st.session_state.result_fig = fig
 
-        # การแสดงผลลัพธ์แบบเปิด/ปิดได้ (Expander)
         if st.session_state.analysis_mode is not None:
-            st.write("") # เว้นบรรทัดนิดหน่อย
+            st.write("") 
             with st.expander("✨ เปิด/ปิด พื้นที่แสดงผลการวิเคราะห์", expanded=True):
-                if st.session_state.analysis_mode == 'dub':
-                    st.error(st.session_state.result_text)
-                elif st.session_state.analysis_mode == 'den':
-                    st.success(st.session_state.result_text)
-                    if st.session_state.result_fig:
-                        st.pyplot(st.session_state.result_fig)
+                # ยกเลิกการใช้ st.error/st.success และใช้ st.markdown ส่ง HTML เพื่อให้ตัวใหญ่คมชัดขึ้น
+                st.markdown(st.session_state.result_text, unsafe_allow_html=True)
+                
+                # แสดงกราฟ (ถ้ามี)
+                if st.session_state.analysis_mode == 'den' and st.session_state.result_fig:
+                    st.pyplot(st.session_state.result_fig)
 
 if __name__ == "__main__":
     main()
