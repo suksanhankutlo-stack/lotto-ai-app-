@@ -1,5 +1,5 @@
 # ============================================================
-# 🤖 LOTTO AI PRO V8.4.3 TURBO EXTREME (History & Top-3 Dead)
+# 🤖 LOTTO AI PRO V8.4.4 TURBO EXTREME (Backtest Edition)
 # ============================================================
 import re
 import warnings
@@ -16,7 +16,7 @@ warnings.filterwarnings("ignore")
 # ============================================================
 # 1. STREAMLIT CONFIG & CSS
 # ============================================================
-st.set_page_config(page_title="Lotto AI V8.4.3 Turbo", page_icon="⚡", layout="wide", initial_sidebar_state="collapsed")
+st.set_page_config(page_title="Lotto AI V8.4.4 Turbo", page_icon="⚡", layout="wide", initial_sidebar_state="collapsed")
 
 def inject_css():
     st.markdown("""
@@ -101,11 +101,9 @@ def normalize_date(value):
         except: pass
     return None
 
-class ScrapingError(Exception): pass
-
 @st.cache_data(ttl=600, show_spinner=False)
 def fetch_lottery_data(url):
-    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+    headers = {"User-Agent": "Mozilla/5.0"}
     try:
         response = requests.get(url, headers=headers, timeout=10)
         response.raise_for_status()
@@ -138,7 +136,7 @@ def fetch_lottery_data(url):
                 if six and two: rows.append({"Date": current_date, "Result_6D": six[0], "Result_3D": six[0][-3:], "Result_2D": two[-1]})
                 elif three and two: rows.append({"Date": current_date, "Result_6D": None, "Result_3D": three[0], "Result_2D": two[-1]})
 
-        if not rows: raise ScrapingError("ไม่พบข้อมูลหวยในหน้านี้")
+        if not rows: return pd.DataFrame()
         
         df = pd.DataFrame(rows)
         df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
@@ -147,13 +145,12 @@ def fetch_lottery_data(url):
         if "Result_6D" in df.columns: df["Result_6D"] = df["Result_6D"].astype(str).str.extract(r"(\d{6})")[0]
             
         return df.dropna(subset=["Date"]).drop_duplicates(subset=["Date"]).sort_values("Date").reset_index(drop=True)
-    except Exception as exc:
-        raise ScrapingError(f"โหลดข้อมูลไม่สำเร็จ: {exc}")
+    except: return pd.DataFrame()
 
 def is_thai_6d(df): return "Result_6D" in df.columns and df["Result_6D"].notna().sum() >= 10
 
 # ============================================================
-# 4. FEATURE ENGINEERING (HIGH ACCURACY & OPTIMIZED SPEED)
+# 4. FEATURE ENGINEERING
 # ============================================================
 def build_features(df, thai_6d=False):
     w = df.copy()
@@ -189,12 +186,10 @@ def build_features(df, thai_6d=False):
                 w[f"{pos}_F{window}_5"] = (p == 5).astype(np.float32).rolling(window, min_periods=2).mean()
             
         w[f"{pos}_VOL20"] = p.rolling(20, min_periods=2).max() - p.rolling(20, min_periods=2).min()
-        
         w[f"{pos}_D1"] = s.shift(1) - s.shift(2)
         w[f"{pos}_D2"] = s.shift(2) - s.shift(3)
         w[f"{pos}_MOMENTUM"] = p - s.shift(4)
         w[f"{pos}_DIFF_M5"] = p - w[f"{pos}_M5"]
-        
         w[f"{pos}_ODD"] = p % 2
         w[f"{pos}_HIGH"] = (p >= 5).astype(np.float32)
         w[f"{pos}_MOD3"] = p % 3
@@ -228,7 +223,7 @@ def get_features(thai_6d):
     return list(dict.fromkeys(base))
 
 # ============================================================
-# 5. ML MODELS & LOGIC (STABILITY IMPROVED)
+# 5. ML MODELS & BACKTESTING LOGIC
 # ============================================================
 def get_adaptive_config(n):
     if n >= 700: return {"min_train": 120, "trees": 60, "depth": 7, "leaf": 2, "selected_features": 25, "early_stop": True}
@@ -256,9 +251,7 @@ def select_features_once(X, y, max_features, system="hot"):
     cols = list(X.columns)
     valid = [c for c in cols if X[c].nunique(dropna=False) > 1]
     if len(valid) <= max_features: return valid
-    
     Xi = X[valid].fillna(0.0)
-    
     seed, trees, depth = (123, 10, 4) if system == "hot" else (321, 8, 3)
     selector = ExtraTreesClassifier(n_estimators=trees, max_depth=depth, min_samples_leaf=3, max_features="sqrt", n_jobs=-1, random_state=seed)
     selector.fit(Xi, y)
@@ -270,18 +263,15 @@ def normalize_probability(p):
     return (p / p.sum()).astype(np.float32) if p.sum() > 0 else (np.ones(10, dtype=np.float32) / 10)
 
 def prepare_matrix(X_train, X_test, selected):
-    A = X_train[selected].astype(np.float32)
-    B = X_test[selected].astype(np.float32)
+    A, B = X_train[selected].astype(np.float32), X_test[selected].astype(np.float32)
     med = A.median()
     return A.fillna(med).fillna(0.0), B.fillna(med).fillna(0.0)
 
 def model_probability(X_train, y_train, X_test, cfg, selected, system):
     A, B = prepare_matrix(X_train, X_test, selected)
-    
     weights = {"HistGradientBoosting": 0.65, "ExtraTrees": 0.35}
     final_prob = np.zeros(10, dtype=np.float32)
     weight_sum = 0
-    
     for name in MODEL_NAMES:
         try:
             model = create_model(name, cfg, system)
@@ -293,7 +283,6 @@ def model_probability(X_train, y_train, X_test, cfg, selected, system):
             final_prob += normalize_probability(out) * weights[name]
             weight_sum += weights[name]
         except: pass
-        
     if weight_sum == 0: return np.ones(10, dtype=np.float32) / 10
     return normalize_probability(final_prob / weight_sum)
 
@@ -310,8 +299,7 @@ def run_system(X_train, y_train, X_test, cfg, is_hot=True):
     else:
         dead_score = normalize_probability(1.0 - prob)
         order = np.argsort(dead_score)[::-1]
-        # 🔥 ปรับจาก TOP-5 เป็น TOP-3 ตามคำขอ
-        top_list = [(int(n), float(dead_score[n])) for n in order[:3]]
+        top_list = [(int(n), float(dead_score[n])) for n in order[:3]] # Dead TOP-3
         return {"probability": prob, "results": top_list, "coverage": dead_score[order[:3]].sum(), "selected": selected}
 
 def final_prediction(df_feat, pos, features, cfg):
@@ -320,6 +308,45 @@ def final_prediction(df_feat, pos, features, cfg):
         "hot": run_system(X.iloc[:-1], y.iloc[:-1], X.iloc[[-1]], cfg, is_hot=True),
         "dead": run_system(X.iloc[:-1], y.iloc[:-1], X.iloc[[-1]], cfg, is_hot=False)
     }
+
+# 📈 BACKTEST LOGIC (เดินหน้าทดสอบทีละงวด เพื่อป้องกัน Data Leakage)
+def run_backtest_for_pos(df_feat, pos, features, cfg, steps=10):
+    results = []
+    # ลดภาระต้นไม้ลงครึ่งนึงสำหรับ Backtest เพื่อให้แอปไม่ค้างนาน
+    bt_cfg = cfg.copy()
+    bt_cfg["trees"] = max(15, bt_cfg["trees"] // 2) 
+    
+    for step in range(steps, 0, -1):
+        target_idx = -step - 1 # ข้าม dummy แถวสุดท้าย
+        
+        # ข้อมูลสำหรับ Train จะสิ้นสุดก่อนแถวที่จะทาย (ป้องกันแอบดูข้อสอบ)
+        X_train = df_feat[features].iloc[:target_idx]
+        y_train = df_feat[pos].astype(np.int8).iloc[:target_idx]
+        X_test = df_feat[features].iloc[[target_idx]]
+        
+        actual_val = int(df_feat[pos].iloc[target_idx])
+        date_val = pd.to_datetime(df_feat['Date'].iloc[target_idx]).strftime("%d/%m/%Y")
+        
+        # ทายผล Hot
+        hot_res = run_system(X_train, y_train, X_test, bt_cfg, is_hot=True)
+        hot_top3 = [n for n, p in hot_res["results"]]
+        hot_win = "✅ เข้า" if actual_val in hot_top3 else "❌ หลุด"
+        
+        # ทายผล Dead
+        dead_res = run_system(X_train, y_train, X_test, bt_cfg, is_hot=False)
+        dead_top3 = [n for n, p in dead_res["results"]]
+        dead_win = "✅ ผ่าน" if actual_val not in dead_top3 else "❌ ตาย"
+        
+        results.append({
+            "วันที่": date_val,
+            "ผลจริง": actual_val,
+            "ทายเด่น (Top3)": " - ".join(map(str, hot_top3)),
+            "ผลเด่น": hot_win,
+            "ทายดับ (Top3)": " - ".join(map(str, dead_top3)),
+            "ผลดับ": dead_win
+        })
+        
+    return pd.DataFrame(results)
 
 # ============================================================
 # 6. UI RENDERERS
@@ -344,7 +371,6 @@ def display_card(pos, data, is_hot=True):
         <div class="dead-card">
             <div class="position-title">🛑 {POSITION_LABELS[pos]}</div>
             <div class="dead-number">{nums_str}</div>
-            <!-- 🔥 อัปเดตข้อความแสดงผลเป็น TOP-3 -->
             <div class="prob-text">🛑 DEAD SCORE TOP-3<br>{prob_str}</div>
             <div class="confidence">ความมั่นใจดับ: {res['coverage']*100:.1f}%</div>
         </div>
@@ -356,21 +382,18 @@ def display_card(pos, data, is_hot=True):
 # ============================================================
 def main():
     inject_css()
-    st.markdown("<div class='main-title'>🤖 LOTTO AI PRO V8.4.3</div>", unsafe_allow_html=True)
-    st.markdown("<div class='subtitle'>⚡ อัปเดต: ตารางสถิติย้อนหลัง 10 งวด & ปรับเลขดับเป็น TOP-3 📉</div>", unsafe_allow_html=True)
+    st.markdown("<div class='main-title'>🤖 LOTTO AI PRO V8.4.4</div>", unsafe_allow_html=True)
+    st.markdown("<div class='subtitle'>⚡ เพิ่มระบบ Backtest ทดสอบความแม่นยำย้อนหลัง 10 งวด 📈</div>", unsafe_allow_html=True)
 
     c1, c2 = st.columns(2)
     lottery = c1.selectbox("🏷️ เลือกประเภทหวย", list(LOTTERY_SOURCES.keys()))
     selected_day = c2.selectbox("📅 วันเป้าหมาย", ["อัตโนมัติ"] + DOW_NAMES)
 
-    if not st.button("🚀 เริ่มวิเคราะห์ V8.4.3 TURBO EXTREME", type="primary", use_container_width=True):
+    if not st.button("🚀 เริ่มวิเคราะห์ V8.4.4 TURBO EXTREME", type="primary", use_container_width=True):
         return
 
-    # --- Loading & Processing ---
-    with st.spinner("📥 กำลังดึงข้อมูลและประมวลผลโมเดล AI..."):
-        try: df = fetch_lottery_data(LOTTERY_SOURCES[lottery])
-        except Exception as exc: return st.error(str(exc))
-        
+    with st.spinner("📥 กำลังดึงข้อมูล ประมวลผล และทำ Backtest ย้อนหลัง... (อาจใช้เวลา 10-20 วินาที)"):
+        df = fetch_lottery_data(LOTTERY_SOURCES[lottery])
         if len(df) < 50: return st.error(f"❌ ข้อมูลมีเพียง {len(df)} งวด (ต้องการอย่างน้อย 50 งวดเพื่อความแม่นยำ)")
 
         thai_6d = (lottery == "หวยไทย" and is_thai_6d(df))
@@ -392,20 +415,32 @@ def main():
         features = get_features(thai_6d)
         cfg = get_adaptive_config(len(df))
 
-    st.markdown(f"""
-        <div class="status-card">
-            ✅ <b>ข้อมูลพร้อม:</b> {len(df):,} งวด &nbsp;|&nbsp; 
-            📅 <b>เป้าหมาย:</b> {target_date.strftime("%d/%m/%Y")} &nbsp;|&nbsp; 
-            🧠 <b>AI Features:</b> {len(features)} ตัวแปร 
-        </div>
-    """, unsafe_allow_html=True)
+        st.markdown(f"""
+            <div class="status-card">
+                ✅ <b>ข้อมูลพร้อม:</b> {len(df):,} งวด &nbsp;|&nbsp; 
+                📅 <b>เป้าหมาย:</b> {target_date.strftime("%d/%m/%Y")} &nbsp;|&nbsp; 
+                🧠 <b>AI Features:</b> {len(features)} ตัวแปร 
+            </div>
+        """, unsafe_allow_html=True)
 
-    final = {}
-    progress_bar = st.progress(0)
-    for i, pos in enumerate(positions):
-        final[pos] = final_prediction(feat, pos, features, cfg)
-        progress_bar.progress(int(((i + 1) / len(positions)) * 100))
-    progress_bar.empty()
+        final = {}
+        progress_bar = st.progress(0)
+        
+        # คำนวณจำนวนงวดที่จะ backtest (สูงสุด 10 งวด)
+        bt_steps = min(10, len(df) - 50)
+        
+        for i, pos in enumerate(positions):
+            # 1. ทายผลสำหรับงวดถัดไป
+            final[pos] = final_prediction(feat, pos, features, cfg)
+            
+            # 2. ทำ Backtest ย้อนหลัง 10 งวด
+            if bt_steps > 0:
+                final[pos]["backtest"] = run_backtest_for_pos(feat, pos, features, cfg, steps=bt_steps)
+            else:
+                final[pos]["backtest"] = None
+                
+            progress_bar.progress(int(((i + 1) / len(positions)) * 100))
+        progress_bar.empty()
 
     # --- SUMMARY TABLE ---
     st.markdown("### 📊 สรุปผลตัวเลขที่ AI แนะนำ")
@@ -418,15 +453,13 @@ def main():
             "🔥 เลขเด่น (เต็ง 1)": f"{hot_top[0]} ({hot_top[1]*100:.1f}%)",
             "🔥 เด่นสำรอง (Top 3)": " - ".join(str(n) for n, _ in final[pos]["hot"]["results"]),
             "🛑 เลขดับ (ควรเลี่ยง)": f"{dead_top[0]} ({dead_top[1]*100:.1f}%)",
-            # 🔥 อัปเดตข้อความแสดงผลเป็น Top 3 ในตาราง
             "🛑 กลุ่มเลขดับ (Top 3)": " - ".join(str(n) for n, _ in final[pos]["dead"]["results"])
         })
     st.dataframe(pd.DataFrame(summary_data), use_container_width=True, hide_index=True)
     st.markdown("---")
 
-    # --- TABS FOR DETAILS & HISTORY ---
-    # 🔥 เพิ่ม Tab สำหรับแสดงประวัติ 10 งวดล่าสุด
-    t1, t2, t3 = st.tabs(["🔥 เจาะลึกเลขเด่น TOP-3", "🛑 เจาะลึกเลขดับ TOP-3", "📜 ประวัติตัวเลข 10 งวดล่าสุด"])
+    # --- TABS FOR DETAILS & HISTORY & BACKTEST ---
+    t1, t2, t3, t4 = st.tabs(["🔥 เจาะลึกเลขเด่น", "🛑 เจาะลึกเลขดับ", "📜 ประวัติ 10 งวด", "📈 แบ็คเทสต์ (Backtest 10 งวด)"])
     
     with t1:
         for i in range(0, len(positions), 2):
@@ -446,27 +479,36 @@ def main():
                 with cols[1]:
                     display_card(positions[i+1], final[positions[i+1]], is_hot=False)
 
-    # 🔥 โค้ดส่วนสร้างตารางประวัติย้อนหลัง 10 งวดแยกตามหลัก
     with t3:
         st.markdown("### 📜 สถิติผลการออกรางวัล 10 งวดล่าสุด (เรียงจากล่าสุดไปเก่าสุด)")
-        
-        # ดึง 10 แถวสุดท้าย (ตัดแถว dummy ล่าสุดออก)
         history_cols = ["Date"] + positions
-        df_history = feat.iloc[:-1].tail(10)[history_cols].copy()
-        df_history = df_history.sort_values("Date", ascending=False)
+        df_history = feat.iloc[:-1].tail(10)[history_cols].copy().sort_values("Date", ascending=False)
         df_history["Date"] = df_history["Date"].dt.strftime("%d/%m/%Y")
         
-        # เปลี่ยนชื่อคอลัมน์ให้อ่านง่าย
         rename_dict = {pos: POSITION_LABELS[pos] for pos in positions}
         rename_dict["Date"] = "วันที่"
         df_history = df_history.rename(columns=rename_dict)
         
-        # แปลงข้อมูลตัวเลขเป็น String ให้ดูสวยงาม ไม่มีทศนิยม
         for col in df_history.columns:
-            if col != "วันที่":
-                df_history[col] = df_history[col].astype(int).astype(str)
+            if col != "วันที่": df_history[col] = df_history[col].astype(int).astype(str)
                 
         st.dataframe(df_history, use_container_width=True, hide_index=True)
+
+    with t4:
+        st.markdown("### 📈 จำลองการทำกำไรย้อนหลัง 10 งวด (AI Walk-Forward Backtest)")
+        st.info("💡 ระบบทำการย้อนเวลาไปทำนายผลลัพธ์ทีละงวด โดยไม่ใช้ข้อมูลอนาคต เพื่อดูว่า AI ทายแม่นยำแค่ไหน")
+        
+        for pos in positions:
+            bt_df = final[pos]["backtest"]
+            if bt_df is not None:
+                # คำนวณ Win Rate
+                hot_wins = (bt_df["ผลเด่น"] == "✅ เข้า").sum()
+                dead_wins = (bt_df["ผลดับ"] == "✅ ผ่าน").sum()
+                total = len(bt_df)
+                
+                with st.expander(f"📊 ผลทดสอบ: {POSITION_LABELS[pos]} (เด่นเข้า {hot_wins}/{total} | ดับรอด {dead_wins}/{total})", expanded=False):
+                    st.markdown(f"**🔥 ความแม่นยำเลขเด่น (Top-3):** `{hot_wins/total*100:.0f}%` &nbsp;|&nbsp; **🛑 ความแม่นยำเลขดับ (รอดตาย):** `{dead_wins/total*100:.0f}%`")
+                    st.dataframe(bt_df.sort_values("วันที่", ascending=False), use_container_width=True, hide_index=True)
 
 if __name__ == "__main__":
     main()
