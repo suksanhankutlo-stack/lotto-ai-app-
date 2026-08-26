@@ -1,5 +1,5 @@
 # ============================================================
-# 🤖 LOTTO AI PRO V8.4.1 TURBO EXTREME (Accuracy & UI Fixed)
+# 🤖 LOTTO AI PRO V8.4.3 TURBO EXTREME (History & Top-3 Dead)
 # ============================================================
 import re
 import warnings
@@ -16,7 +16,7 @@ warnings.filterwarnings("ignore")
 # ============================================================
 # 1. STREAMLIT CONFIG & CSS
 # ============================================================
-st.set_page_config(page_title="Lotto AI V8.4.1 Turbo Extreme", page_icon="⚡", layout="wide", initial_sidebar_state="collapsed")
+st.set_page_config(page_title="Lotto AI V8.4.3 Turbo", page_icon="⚡", layout="wide", initial_sidebar_state="collapsed")
 
 def inject_css():
     st.markdown("""
@@ -153,7 +153,7 @@ def fetch_lottery_data(url):
 def is_thai_6d(df): return "Result_6D" in df.columns and df["Result_6D"].notna().sum() >= 10
 
 # ============================================================
-# 4. FEATURE ENGINEERING (HIGH ACCURACY)
+# 4. FEATURE ENGINEERING (HIGH ACCURACY & OPTIMIZED SPEED)
 # ============================================================
 def build_features(df, thai_6d=False):
     w = df.copy()
@@ -179,10 +179,8 @@ def build_features(df, thai_6d=False):
         s = w[pos]
         p = s.shift(1)
         
-        # 4.1 Lags
         for lag in (1, 2, 3, 5): w[f"{pos}_L{lag}"] = s.shift(lag)
         
-        # 4.2 Rolling Stats (Added Short-term M5/S5 for better trend catching)
         for window in (5, 10, 20):
             w[f"{pos}_M{window}"] = p.rolling(window, min_periods=2).mean()
             w[f"{pos}_S{window}"] = p.rolling(window, min_periods=2).std()
@@ -192,15 +190,16 @@ def build_features(df, thai_6d=False):
             
         w[f"{pos}_VOL20"] = p.rolling(20, min_periods=2).max() - p.rolling(20, min_periods=2).min()
         
-        # 4.3 Pattern & States
         w[f"{pos}_D1"] = s.shift(1) - s.shift(2)
         w[f"{pos}_D2"] = s.shift(2) - s.shift(3)
+        w[f"{pos}_MOMENTUM"] = p - s.shift(4)
+        w[f"{pos}_DIFF_M5"] = p - w[f"{pos}_M5"]
+        
         w[f"{pos}_ODD"] = p % 2
         w[f"{pos}_HIGH"] = (p >= 5).astype(np.float32)
         w[f"{pos}_MOD3"] = p % 3
-        w[f"{pos}_PRIME"] = p.isin([2, 3, 5, 7]).astype(np.float32) # Added Prime indicator
+        w[f"{pos}_PRIME"] = p.isin([2, 3, 5, 7]).astype(np.float32)
         
-        # 4.4 Advanced Math
         w[f"{pos}_SIN"], w[f"{pos}_COS"] = np.sin(2 * np.pi * p / 10).astype(np.float32), np.cos(2 * np.pi * p / 10).astype(np.float32)
         w[f"{pos}_EWMA3"] = p.ewm(span=3, adjust=False).mean()
         w[f"{pos}_EWMA10"] = p.ewm(span=10, adjust=False).mean()
@@ -212,7 +211,7 @@ def build_features(df, thai_6d=False):
     w["PREV_MEAN"], w["PREV_ODD"] = base.mean(axis=1), (base % 2).sum(axis=1)
     w["PREV_HIGH"], w["PREV_UNIQUE"] = (base >= 5).sum(axis=1), base.nunique(axis=1)
 
-    return w.replace([np.inf, -np.inf], np.nan)
+    return w.replace([np.inf, -np.inf], np.nan).astype(np.float32, errors='ignore')
 
 def get_features(thai_6d):
     base = ["DOW", "DAY", "MONTH", "DAY_OF_YEAR", "DOW_SIN", "DOW_COS", "MONTH_SIN", "MONTH_COS", 
@@ -222,37 +221,43 @@ def get_features(thai_6d):
         base.extend([f"{pos}_L{lag}" for lag in (1,2,3,5)])
         base.extend([f"{pos}_{m}{w}" for m in ("M","S") for w in (5,10,20)])
         base.extend([f"{pos}_F{w}_{d}" for w in (10,20) for d in (0,5)])
-        base.extend([f"{pos}_D1", f"{pos}_D2", f"{pos}_ODD", f"{pos}_HIGH", f"{pos}_MOD3", f"{pos}_PRIME", 
-                     f"{pos}_SIN", f"{pos}_COS", f"{pos}_EWMA3", f"{pos}_EWMA10", f"{pos}_MACD", 
-                     f"{pos}_VOL20", f"{pos}_REPEAT"])
+        base.extend([f"{pos}_D1", f"{pos}_D2", f"{pos}_MOMENTUM", f"{pos}_DIFF_M5", 
+                     f"{pos}_ODD", f"{pos}_HIGH", f"{pos}_MOD3", f"{pos}_PRIME", 
+                     f"{pos}_SIN", f"{pos}_COS", f"{pos}_EWMA3", f"{pos}_EWMA10", 
+                     f"{pos}_MACD", f"{pos}_VOL20", f"{pos}_REPEAT"])
     return list(dict.fromkeys(base))
 
 # ============================================================
-# 5. ML MODELS & LOGIC
+# 5. ML MODELS & LOGIC (STABILITY IMPROVED)
 # ============================================================
 def get_adaptive_config(n):
-    # Tuned for more features and slightly deeper trees
-    if n >= 700: return {"min_train": 120, "trees": 60, "depth": 7, "leaf": 2, "selected_features": 25, "backtest_points": 6, "recent_decay": 0.985}
-    if n >= 400: return {"min_train": 100, "trees": 50, "depth": 6, "leaf": 3, "selected_features": 22, "backtest_points": 6, "recent_decay": 0.980}
-    if n >= 200: return {"min_train": 80, "trees": 40, "depth": 5, "leaf": 3, "selected_features": 18, "backtest_points": 5, "recent_decay": 0.975}
-    return {"min_train": 50, "trees": 35, "depth": 4, "leaf": 2, "selected_features": 16, "backtest_points": 4, "recent_decay": 0.970}
+    if n >= 700: return {"min_train": 120, "trees": 60, "depth": 7, "leaf": 2, "selected_features": 25, "early_stop": True}
+    if n >= 400: return {"min_train": 100, "trees": 50, "depth": 6, "leaf": 3, "selected_features": 22, "early_stop": True}
+    if n >= 200: return {"min_train": 80, "trees": 40, "depth": 5, "leaf": 3, "selected_features": 18, "early_stop": False}
+    return {"min_train": 50, "trees": 35, "depth": 4, "leaf": 2, "selected_features": 16, "early_stop": False}
 
 def create_model(name, cfg, system="hot"):
-    t, d, l = cfg["trees"], cfg["depth"], cfg["leaf"]
+    t, d, l, early = cfg["trees"], cfg["depth"], cfg["leaf"], cfg["early_stop"]
+    
     if system == "hot":
         if name == "ExtraTrees":
             return ExtraTreesClassifier(n_estimators=t, max_depth=d, min_samples_leaf=l, max_features="sqrt", class_weight="balanced", n_jobs=-1, random_state=42)
-        return HistGradientBoostingClassifier(max_iter=max(30, int(t*0.7)), max_leaf_nodes=15, learning_rate=0.04, min_samples_leaf=l, l2_regularization=2.5, random_state=42)
+        return HistGradientBoostingClassifier(
+            max_iter=max(35, int(t*0.8)), max_leaf_nodes=15, learning_rate=0.04, min_samples_leaf=l, 
+            l2_regularization=3.0, early_stopping=early, validation_fraction=0.1, n_iter_no_change=4, random_state=42)
     else: 
         if name == "ExtraTrees":
             return ExtraTreesClassifier(n_estimators=max(20, int(t*0.8)), max_depth=max(3, d-1), min_samples_leaf=l+1, max_features="sqrt", class_weight="balanced", n_jobs=-1, random_state=91)
-        return HistGradientBoostingClassifier(max_iter=max(25, int(t*0.6)), max_leaf_nodes=10, learning_rate=0.03, min_samples_leaf=l+1, l2_regularization=4.0, random_state=91)
+        return HistGradientBoostingClassifier(
+            max_iter=max(30, int(t*0.6)), max_leaf_nodes=10, learning_rate=0.03, min_samples_leaf=l+1, 
+            l2_regularization=4.5, early_stopping=early, validation_fraction=0.1, random_state=91)
 
 def select_features_once(X, y, max_features, system="hot"):
     cols = list(X.columns)
     valid = [c for c in cols if X[c].nunique(dropna=False) > 1]
     if len(valid) <= max_features: return valid
-    Xi = X[valid].replace([np.inf, -np.inf], np.nan).astype(np.float32).fillna(0.0)
+    
+    Xi = X[valid].fillna(0.0)
     
     seed, trees, depth = (123, 10, 4) if system == "hot" else (321, 8, 3)
     selector = ExtraTreesClassifier(n_estimators=trees, max_depth=depth, min_samples_leaf=3, max_features="sqrt", n_jobs=-1, random_state=seed)
@@ -265,15 +270,14 @@ def normalize_probability(p):
     return (p / p.sum()).astype(np.float32) if p.sum() > 0 else (np.ones(10, dtype=np.float32) / 10)
 
 def prepare_matrix(X_train, X_test, selected):
-    A = X_train[selected].replace([np.inf, -np.inf], np.nan).astype(np.float32)
-    B = X_test[selected].replace([np.inf, -np.inf], np.nan).astype(np.float32)
+    A = X_train[selected].astype(np.float32)
+    B = X_test[selected].astype(np.float32)
     med = A.median()
     return A.fillna(med).fillna(0.0), B.fillna(med).fillna(0.0)
 
 def model_probability(X_train, y_train, X_test, cfg, selected, system):
     A, B = prepare_matrix(X_train, X_test, selected)
     
-    # 💥 Adjusted Weighting for Higher Accuracy (HGB is strictly better on tabular)
     weights = {"HistGradientBoosting": 0.65, "ExtraTrees": 0.35}
     final_prob = np.zeros(10, dtype=np.float32)
     weight_sum = 0
@@ -306,11 +310,12 @@ def run_system(X_train, y_train, X_test, cfg, is_hot=True):
     else:
         dead_score = normalize_probability(1.0 - prob)
         order = np.argsort(dead_score)[::-1]
-        top_list = [(int(n), float(dead_score[n])) for n in order[:5]]
-        return {"probability": prob, "results": top_list, "coverage": dead_score[order[:5]].sum(), "selected": selected}
+        # 🔥 ปรับจาก TOP-5 เป็น TOP-3 ตามคำขอ
+        top_list = [(int(n), float(dead_score[n])) for n in order[:3]]
+        return {"probability": prob, "results": top_list, "coverage": dead_score[order[:3]].sum(), "selected": selected}
 
 def final_prediction(df_feat, pos, features, cfg):
-    X, y = df_feat[features].astype(np.float32), df_feat[pos].astype(np.int8)
+    X, y = df_feat[features], df_feat[pos].astype(np.int8)
     return {
         "hot": run_system(X.iloc[:-1], y.iloc[:-1], X.iloc[[-1]], cfg, is_hot=True),
         "dead": run_system(X.iloc[:-1], y.iloc[:-1], X.iloc[[-1]], cfg, is_hot=False)
@@ -339,7 +344,8 @@ def display_card(pos, data, is_hot=True):
         <div class="dead-card">
             <div class="position-title">🛑 {POSITION_LABELS[pos]}</div>
             <div class="dead-number">{nums_str}</div>
-            <div class="prob-text">🛑 DEAD SCORE TOP-5<br>{prob_str}</div>
+            <!-- 🔥 อัปเดตข้อความแสดงผลเป็น TOP-3 -->
+            <div class="prob-text">🛑 DEAD SCORE TOP-3<br>{prob_str}</div>
             <div class="confidence">ความมั่นใจดับ: {res['coverage']*100:.1f}%</div>
         </div>
         """
@@ -350,14 +356,14 @@ def display_card(pos, data, is_hot=True):
 # ============================================================
 def main():
     inject_css()
-    st.markdown("<div class='main-title'>🤖 LOTTO AI PRO V8.4.1</div>", unsafe_allow_html=True)
-    st.markdown("<div class='subtitle'>🔥 แก้ปัญหาลำดับหลัก + อัปเกรดความแม่นยำ (Prime & Volatility) ✨</div>", unsafe_allow_html=True)
+    st.markdown("<div class='main-title'>🤖 LOTTO AI PRO V8.4.3</div>", unsafe_allow_html=True)
+    st.markdown("<div class='subtitle'>⚡ อัปเดต: ตารางสถิติย้อนหลัง 10 งวด & ปรับเลขดับเป็น TOP-3 📉</div>", unsafe_allow_html=True)
 
     c1, c2 = st.columns(2)
     lottery = c1.selectbox("🏷️ เลือกประเภทหวย", list(LOTTERY_SOURCES.keys()))
     selected_day = c2.selectbox("📅 วันเป้าหมาย", ["อัตโนมัติ"] + DOW_NAMES)
 
-    if not st.button("🚀 เริ่มวิเคราะห์ V8.4.1 TURBO EXTREME", type="primary", use_container_width=True):
+    if not st.button("🚀 เริ่มวิเคราะห์ V8.4.3 TURBO EXTREME", type="primary", use_container_width=True):
         return
 
     # --- Loading & Processing ---
@@ -412,15 +418,16 @@ def main():
             "🔥 เลขเด่น (เต็ง 1)": f"{hot_top[0]} ({hot_top[1]*100:.1f}%)",
             "🔥 เด่นสำรอง (Top 3)": " - ".join(str(n) for n, _ in final[pos]["hot"]["results"]),
             "🛑 เลขดับ (ควรเลี่ยง)": f"{dead_top[0]} ({dead_top[1]*100:.1f}%)",
-            "🛑 กลุ่มเลขดับ (Top 5)": " - ".join(str(n) for n, _ in final[pos]["dead"]["results"])
+            # 🔥 อัปเดตข้อความแสดงผลเป็น Top 3 ในตาราง
+            "🛑 กลุ่มเลขดับ (Top 3)": " - ".join(str(n) for n, _ in final[pos]["dead"]["results"])
         })
     st.dataframe(pd.DataFrame(summary_data), use_container_width=True, hide_index=True)
     st.markdown("---")
 
-    # --- TABS FOR DETAILS ---
-    t1, t2 = st.tabs(["🔥 เจาะลึกเลขเด่น TOP-3", "🛑 เจาะลึกเลขดับ TOP-5"])
+    # --- TABS FOR DETAILS & HISTORY ---
+    # 🔥 เพิ่ม Tab สำหรับแสดงประวัติ 10 งวดล่าสุด
+    t1, t2, t3 = st.tabs(["🔥 เจาะลึกเลขเด่น TOP-3", "🛑 เจาะลึกเลขดับ TOP-3", "📜 ประวัติตัวเลข 10 งวดล่าสุด"])
     
-    # 🔥 FIXED: วาด UI ใหม่เพื่อแก้บั๊กลำดับการแสดงผลบนมือถือ (Row-by-Row rendering)
     with t1:
         for i in range(0, len(positions), 2):
             cols = st.columns(2)
@@ -438,6 +445,28 @@ def main():
             if i + 1 < len(positions):
                 with cols[1]:
                     display_card(positions[i+1], final[positions[i+1]], is_hot=False)
+
+    # 🔥 โค้ดส่วนสร้างตารางประวัติย้อนหลัง 10 งวดแยกตามหลัก
+    with t3:
+        st.markdown("### 📜 สถิติผลการออกรางวัล 10 งวดล่าสุด (เรียงจากล่าสุดไปเก่าสุด)")
+        
+        # ดึง 10 แถวสุดท้าย (ตัดแถว dummy ล่าสุดออก)
+        history_cols = ["Date"] + positions
+        df_history = feat.iloc[:-1].tail(10)[history_cols].copy()
+        df_history = df_history.sort_values("Date", ascending=False)
+        df_history["Date"] = df_history["Date"].dt.strftime("%d/%m/%Y")
+        
+        # เปลี่ยนชื่อคอลัมน์ให้อ่านง่าย
+        rename_dict = {pos: POSITION_LABELS[pos] for pos in positions}
+        rename_dict["Date"] = "วันที่"
+        df_history = df_history.rename(columns=rename_dict)
+        
+        # แปลงข้อมูลตัวเลขเป็น String ให้ดูสวยงาม ไม่มีทศนิยม
+        for col in df_history.columns:
+            if col != "วันที่":
+                df_history[col] = df_history[col].astype(int).astype(str)
+                
+        st.dataframe(df_history, use_container_width=True, hide_index=True)
 
 if __name__ == "__main__":
     main()
