@@ -1,5 +1,5 @@
 # ============================================================
-# 🤖 LOTTO AI PRO V8.8 FAST ADAPTIVE (ROBUST SCRAPER + AUTO-CORRECT)
+# 🤖 LOTTO AI PRO V8.9 CLEAN & TOP 5 BOTTOM (AUTO-CORRECT)
 # ============================================================
 import re
 import warnings
@@ -22,7 +22,7 @@ warnings.filterwarnings("ignore")
 # 1. STREAMLIT CONFIG
 # ============================================================
 st.set_page_config(
-    page_title="Lotto AI V8.8 Robust Scraper",
+    page_title="Lotto AI V8.9 Top5 Bottom",
     page_icon="⚡",
     layout="wide",
     initial_sidebar_state="collapsed"
@@ -35,14 +35,16 @@ def inject_css():
     .main-title { text-align:center; font-size:2.2rem; font-weight:900; color:#1e293b; }
     .subtitle { text-align:center; color:#64748b; font-size:.9rem; margin-bottom:25px; }
     .status-card { background:linear-gradient(135deg,#eff6ff,#dbeafe); border-radius:12px; padding:15px; text-align:center; color:#1e40af; font-weight:600; margin-bottom:20px; }
-    .hot-card { background:white; border-left:8px solid #10b981; border-radius:12px; padding:20px; margin:10px 0; box-shadow:0 4px 10px rgba(0,0,0,.05); position: relative; }
-    .dead-card { background:white; border-left:8px solid #ef4444; border-radius:12px; padding:20px; margin:10px 0; box-shadow:0 4px 10px rgba(0,0,0,.05); position: relative; }
+    .hot-card { background:white; border-left:8px solid #10b981; border-radius:12px; padding:20px; margin:10px 0; box-shadow:0 4px 10px rgba(0,0,0,.05); }
+    .dead-card { background:white; border-left:8px solid #ef4444; border-radius:12px; padding:20px; margin:10px 0; box-shadow:0 4px 10px rgba(0,0,0,.05); }
     .position-title { font-size:1.2rem; font-weight:800; color:#334155; margin-bottom:10px; border-bottom:2px solid #f1f5f9; padding-bottom:5px; }
     .hot-number { font-size:2.5rem; font-weight:900; letter-spacing:4px; text-align:center; color:#10b981; }
     .dead-number { font-size:2.5rem; font-weight:900; letter-spacing:4px; text-align:center; color:#ef4444; text-decoration:line-through; text-decoration-color:rgba(239,68,68,.4); }
     .prob-text { text-align:center; color:#475569; font-size:.95rem; font-weight:600; margin-top:10px; padding:10px; background:#f8fafc; border-radius:8px; }
     .confidence { text-align:center; font-size:.85rem; font-weight:600; margin-top:10px; color:#64748b; }
-    .fallback-badge { background:#fef08a; color:#854d0e; padding:5px 10px; border-radius:6px; font-size:0.8rem; font-weight:bold; margin-bottom:10px; display:inline-block; }
+    .top5-box { background:linear-gradient(135deg,#ecfdf5,#d1fae5); border:2px solid #10b981; border-radius:12px; padding:20px; margin-top:20px; text-align:center; box-shadow:0 4px 10px rgba(0,0,0,.05); }
+    .top5-title { font-size:1.3rem; font-weight:900; color:#065f46; margin-bottom:10px; }
+    .top5-nums { font-size:2rem; font-weight:900; letter-spacing:6px; color:#047857; }
     div.stButton > button { width:100%; min-height:50px; border-radius:10px; font-size:1.1rem; font-weight:800; }
     </style>
     """, unsafe_allow_html=True)
@@ -85,7 +87,7 @@ MONTH_REGEXES = [(m, re.compile(rf"(\d{{1,2}})\s*{re.escape(n)}\s*(\d{{4}})", re
 DATE_FORMAT_REGEX = re.compile(r"(\d{1,4})[/-](\d{1,2})[/-](\d{2,4})")
 
 # ============================================================
-# 3. ROBUST DATA EXTRACTION
+# 3. SCRAPER
 # ============================================================
 def normalize_date(value):
     if not value: return None
@@ -109,24 +111,12 @@ def normalize_date(value):
 
 @st.cache_data(ttl=600, show_spinner=False)
 def fetch_lottery_data(url):
-    # ปรับ Headers ให้เหมือนคนใช้งานจริงที่สุด ป้องกันการโดนบล็อก
     headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-        "Accept-Language": "th-TH,th;q=0.9,en-US;q=0.8,en;q=0.7",
-        "Connection": "keep-alive",
-        "Upgrade-Insecure-Requests": "1"
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     }
-    
     try:
         response = requests.get(url, headers=headers, timeout=15)
         response.raise_for_status()
-    except requests.exceptions.HTTPError as err:
-        return pd.DataFrame(), f"HTTP Error: เว็บไซต์อาจถูกลบ หรือปฏิเสธการเข้าถึง ({err})"
-    except requests.exceptions.ConnectionError:
-        return pd.DataFrame(), "Connection Error: ไม่สามารถเชื่อมต่อกับเว็บไซต์ได้ โปรดตรวจสอบอินเทอร์เน็ต"
-    except requests.exceptions.Timeout:
-        return pd.DataFrame(), "Timeout: เว็บไซต์ตอบสนองช้าเกินไป (เกิน 15 วินาที)"
     except Exception as e:
         return pd.DataFrame(), f"Network Error: {str(e)}"
 
@@ -139,11 +129,9 @@ def fetch_lottery_data(url):
         regex_3d = re.compile(r"(?<!\d)\d{3}(?!\d)")
         regex_2d = re.compile(r"(?<!\d)\d{2}(?!\d)")
 
-        # วิธีที่ 1: หาจากตาราง
         for row in content.find_all("tr"):
             text = " ".join(c.get_text(" ", strip=True) for c in row.find_all(["td", "th"]))
             if not text: continue
-            
             date = normalize_date(text)
             if not date: continue
 
@@ -156,7 +144,6 @@ def fetch_lottery_data(url):
             elif three and two:
                 rows.append({"Date": date, "Result_6D": None, "Result_3D": three[0], "Result_2D": two[-1]})
 
-        # วิธีที่ 2: ถ้าตารางพัง ให้หาจากบรรทัดข้อความ (Fallback)
         if not rows:
             lines = [x.strip() for x in content.get_text(separator="\n", strip=True).splitlines() if x.strip()]
             current_date = None
@@ -174,8 +161,7 @@ def fetch_lottery_data(url):
                 elif three and two:
                     rows.append({"Date": current_date, "Result_6D": None, "Result_3D": three[0], "Result_2D": two[-1]})
 
-        if not rows:
-            return pd.DataFrame(), "ดึงหน้าเว็บสำเร็จ แต่ระบบไม่พบข้อมูลวันที่/ตัวเลข (รูปแบบเว็บอาจเปลี่ยนไป)"
+        if not rows: return pd.DataFrame(), "ไม่พบข้อมูลตัวเลข"
 
         df = pd.DataFrame(rows)
         df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
@@ -187,9 +173,8 @@ def fetch_lottery_data(url):
 
         df = df.dropna(subset=["Date"]).drop_duplicates(subset=["Date"]).sort_values("Date").reset_index(drop=True)
         return df, None
-
     except Exception as e:
-        return pd.DataFrame(), f"Data Parsing Error: ทำความสะอาดข้อมูลล้มเหลว ({str(e)})"
+        return pd.DataFrame(), str(e)
 
 def is_thai_6d(df):
     return "Result_6D" in df.columns and df["Result_6D"].notna().sum() >= 10
@@ -199,7 +184,6 @@ def is_thai_6d(df):
 # ============================================================
 def build_features(df, thai_6d=False):
     w = df.copy()
-
     if thai_6d:
         six = w["Result_6D"].fillna("000000").astype(str).str.zfill(6)
         for i in range(6): w[f"H{i+1}"] = six.str[i].astype(np.int8)
@@ -221,15 +205,11 @@ def build_features(df, thai_6d=False):
     w["DOW_COS"] = np.cos(2 * np.pi * w["DOW"] / 7).astype(np.float32)
     
     positions = THAI_POSITIONS if thai_6d else NORMAL_POSITIONS
-
     for pos in positions:
         s = w[pos]
         p = s.shift(1)
-
         for lag in (1, 2, 3, 5): w[f"{pos}_L{lag}"] = s.shift(lag)
-        for window in (5, 10, 20):
-            w[f"{pos}_M{window}"] = p.rolling(window, min_periods=2).mean()
-        
+        for window in (5, 10, 20): w[f"{pos}_M{window}"] = p.rolling(window, min_periods=2).mean()
         w[f"{pos}_D1"] = s.shift(1) - s.shift(2)
         w[f"{pos}_MOMENTUM"] = p - s.shift(4)
         roll_20 = p.rolling(20, min_periods=2)
@@ -305,9 +285,7 @@ def ensemble_probability(X_train, y_train, X_test, cfg, selected):
     except: pass
 
     if not model_outputs: return np.ones(10, dtype=np.float32) / 10
-    
-    result = sum(p * w for p, w in model_outputs)
-    return normalize_probability(result)
+    return normalize_probability(sum(p * w for p, w in model_outputs))
 
 def run_system_pair(X_train, y_train, X_test, cfg):
     selected = select_features_once(X_train, y_train, cfg["selected_features"], cfg)
@@ -328,12 +306,9 @@ def compute_fallback_prob(df_feat, pos):
     recent = df_feat[pos].iloc[-61:-1].dropna().astype(int)
     freq = np.zeros(10)
     weights = np.linspace(0.2, 1.0, len(recent)) 
-    for val, w in zip(recent, weights):
-        freq[val] += w
-        
+    for val, w in zip(recent, weights): freq[val] += w
     prob = freq / (freq.sum() + 1e-9)
-    prob = (prob * 0.7) + 0.03 
-    return normalize_probability(prob)
+    return normalize_probability((prob * 0.7) + 0.03)
 
 # ============================================================
 # 6. BACKTEST
@@ -348,13 +323,11 @@ def run_backtest_for_pos(df_feat, pos, features, cfg, steps):
     start_idx = max(0, target_start - bt_cfg["train_window"])
     X_tr_full = df_feat[features].iloc[start_idx:target_start]
     y_tr_full = df_feat[pos].astype(np.int8).iloc[start_idx:target_start]
-    
     selected_for_bt = select_features_once(X_tr_full, y_tr_full, bt_cfg["selected_features"], bt_cfg) if len(X_tr_full) >= bt_cfg["min_train"] else features[:10]
 
     for step in range(steps, 0, -1):
         target_idx = len(df_feat) - 1 - step
         if target_idx <= 0: continue
-            
         start = max(0, target_idx - bt_cfg["train_window"])
         X_train = df_feat[features].iloc[start:target_idx]
         y_train = df_feat[pos].astype(np.int8).iloc[start:target_idx]
@@ -378,22 +351,18 @@ def run_backtest_for_pos(df_feat, pos, features, cfg, steps):
             "ทายดับ Top3": " - ".join(map(str, dead_top3)),
             "ผลดับ": "✅ ผ่าน" if actual not in dead_top3 else "❌ ตาย"
         })
-
     return pd.DataFrame(results)
 
 # ============================================================
 # DISPLAY & MAIN
 # ============================================================
 def display_card(pos, data, is_hot=True):
-    fallback_html = "<div class='fallback-badge'>⚠️ เข้าสู่โหมดแก้ไขตัวเองอัตโนมัติ (ปรับสถิติใหม่เนื่องจากหลุด 2 งวดติด)</div>" if data.get("is_fallback") else ""
-    
     if is_hot:
         items = data["hot_results"]
         nums = " - ".join(str(n) for n, p in items)
         probs = " | ".join(f"{n}: {p*100:.1f}%" for n, p in items)
         html = f"""
         <div class="hot-card">
-            {fallback_html}
             <div class="position-title">🎯 {POSITION_LABELS[pos]}</div>
             <div class="hot-number">{nums}</div>
             <div class="prob-text">🔥 HOT TOP-3<br>{probs}</div>
@@ -406,7 +375,6 @@ def display_card(pos, data, is_hot=True):
         probs = " | ".join(f"{n}: {p*100:.1f}%" for n, p in items)
         html = f"""
         <div class="dead-card">
-            {fallback_html}
             <div class="position-title">🛑 {POSITION_LABELS[pos]}</div>
             <div class="dead-number">{nums}</div>
             <div class="prob-text">🛑 DEAD SCORE TOP-3<br>{probs}</div>
@@ -416,31 +384,26 @@ def display_card(pos, data, is_hot=True):
 
 def main():
     inject_css()
-    st.markdown("<div class='main-title'>🤖 LOTTO AI PRO V8.8</div>", unsafe_allow_html=True)
-    st.markdown("<div class='subtitle'>⚡ DEBUG SCRAPER • แจ้งเตือนข้อผิดพลาดเว็บ • AUTO-CORRECT</div>", unsafe_allow_html=True)
+    st.markdown("<div class='main-title'>🤖 LOTTO AI PRO V8.9</div>", unsafe_allow_html=True)
+    st.markdown("<div class='subtitle'>⚡ CLEAN UI • AUTO-CORRECT • TOP 5 BOTTOM SUMMARY</div>", unsafe_allow_html=True)
 
     c1, c2 = st.columns(2)
     lottery = c1.selectbox("🏷️ เลือกประเภทหวย", list(LOTTERY_SOURCES.keys()))
     selected_day = c2.selectbox("📅 วันเป้าหมาย", ["อัตโนมัติ"] + DOW_NAMES)
 
-    if not st.button("🚀 เริ่มวิเคราะห์ V8.8", type="primary", use_container_width=True):
+    if not st.button("🚀 เริ่มวิเคราะห์ V8.9", type="primary", use_container_width=True):
         return
 
     with st.spinner("📥 กำลังดึงข้อมูลจากเว็บ..."):
-        # รับค่า df และ Error Message จากฟังก์ชันใหม่
         df, error_msg = fetch_lottery_data(LOTTERY_SOURCES[lottery])
-        
-        # แจ้งเตือนสาเหตุที่ดึงข้อมูลไม่ได้ บนหน้าจอ
         if error_msg:
             st.error(f"❌ มีปัญหาการดึงข้อมูล: {error_msg}")
-            st.info("💡 คำแนะนำ: ลองเปิดลิงก์บนเว็บบราวเซอร์ปกติว่าเข้าได้หรือไม่ หรืออาจต้องรอสักพักแล้วกดใหม่")
             return
-
         if len(df) < 50:
-            st.error(f"❌ ข้อมูลมีเพียง {len(df)} งวด (ระบบต้องการอย่างน้อย 50 งวดเพื่อวิเคราะห์แม่นยำ)")
+            st.error(f"❌ ข้อมูลมีเพียง {len(df)} งวด (ต้องการอย่างน้อย 50 งวด)")
             return
 
-    with st.spinner("🧠 ข้อมูลพร้อม! กำลังประมวลผล AI & Backtest (Multi-thread)..."):
+    with st.spinner("🧠 กำลังประมวลผล AI & Backtest (Multi-thread)..."):
         thai_6d = (lottery == "หวยไทย" and is_thai_6d(df))
         positions = THAI_POSITIONS if thai_6d else NORMAL_POSITIONS
 
@@ -458,7 +421,6 @@ def main():
 
         final = {}
         progress = st.progress(0)
-        
         bt_steps = min(15, max(5, len(df) - cfg["min_train"])) 
 
         def process_position(pos):
@@ -468,7 +430,6 @@ def main():
             res_final = run_system_pair(X, y, X_test, cfg)
             
             res_bt = run_backtest_for_pos(feat, pos, features, cfg, steps=bt_steps)
-            is_fallback = False
             
             if res_bt is not None and len(res_bt) >= 2:
                 recent_2 = res_bt.tail(2)
@@ -482,10 +443,8 @@ def main():
                     res_final["dead_results"] = [(int(n), float(dead_score[n])) for n in order_dead[:3]]
                     res_final["confidence"] = float(fallback_prob[order_hot[0]]) - float(fallback_prob[order_hot[1]])
                     res_final["hot_coverage"] = float(fallback_prob[order_hot[:3]].sum())
-                    is_fallback = True
 
             res_final["backtest"] = res_bt
-            res_final["is_fallback"] = is_fallback
             return pos, res_final
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=len(positions)) as executor:
@@ -494,7 +453,6 @@ def main():
                 pos, data = future.result()
                 final[pos] = data
                 progress.progress(int(((i + 1) / len(positions)) * 100))
-
         progress.empty()
 
     # ========================================================
@@ -502,6 +460,7 @@ def main():
     # ========================================================
     st.success(f"✅ ข้อมูลล่าสุดที่ใช้ประมวลผล: งวดวันที่ {last_date.strftime('%d/%m/%Y')}")
     st.markdown("### 📊 สรุปผล AI")
+    
     summary = []
     for pos in positions:
         hot = final[pos]["hot_results"]
@@ -509,9 +468,8 @@ def main():
         bt = final[pos]["backtest"]
         bt_hot = (bt["ผลเด่น"] == "✅ เข้า").sum() / len(bt) if (bt is not None and not bt.empty) else 0
         
-        fallback_str = "⚠️ Fallback" if final[pos]["is_fallback"] else ""
         summary.append({
-            "ตำแหน่ง": f"{POSITION_LABELS[pos]} {fallback_str}",
+            "ตำแหน่ง": POSITION_LABELS[pos],
             "🔥 HOT TOP3": " - ".join(str(n) for n, p in hot),
             "🛑 DEAD TOP3": " - ".join(str(n) for n, p in dead),
             "ความมั่นใจ AI": f"{final[pos]['hot_coverage']*100:.1f}%",
@@ -521,7 +479,7 @@ def main():
     st.dataframe(pd.DataFrame(summary), use_container_width=True, hide_index=True)
     st.markdown("---")
 
-    t1, t2, t3, t4 = st.tabs(["🔥 เจาะลึกเลขเด่น", "🛑 เจาะลึกเลขดับ", "📜 ประวัติจริง (เช็คหลัก)", "📈 Backtest & ตรวจสอบระบบ"])
+    t1, t2, t3, t4 = st.tabs(["🔥 เจาะลึกเลขเด่น", "🛑 เจาะลึกเลขดับ", "📜 ประวัติจริง (เช็คหลัก)", "📈 Backtest"])
 
     with t1:
         for i in range(0, len(positions), 2):
@@ -553,13 +511,44 @@ def main():
         for pos in positions:
             bt_df = final[pos]["backtest"]
             if bt_df is None or bt_df.empty: continue
-            
             hot_rate = (bt_df["ผลเด่น"] == "✅ เข้า").sum() / len(bt_df)
-            title = f"📊 {POSITION_LABELS[pos]} | Win Rate {hot_rate*100:.0f}%"
-            if final[pos]["is_fallback"]: title += " ⚠️ (ใช้งาน Fallback Mode แล้ว)"
-            
-            with st.expander(title, expanded=False):
+            with st.expander(f"📊 {POSITION_LABELS[pos]} | Win Rate {hot_rate*100:.0f}%", expanded=False):
                 st.dataframe(bt_df.sort_values("วันที่", ascending=False), use_container_width=True, hide_index=True)
+
+    # ========================================================
+    # 🌟 TOP 5 BOTTOM SUMMARY (เลขเด่นบน - ล่าง 5 ตัวด้านล่างสุด)
+    # ========================================================
+    st.markdown("---")
+    
+    # แยกคำนวณ Top 5 บน (หลักร้อย, สิบ, หน่วย) และ ล่าง (สิบล่าง, หน่วยล่าง)
+    upper_pos = [p for p in positions if p in ["H4", "H5", "H6", "H", "T", "O"]]
+    lower_pos = [p for p in positions if p in ["T2", "O2"]]
+
+    def get_top5(pos_list):
+        if not pos_list: return []
+        combined_prob = np.zeros(10, dtype=np.float32)
+        for p in pos_list:
+            combined_prob += final[p]["probability"]
+        top5_idx = np.argsort(combined_prob)[::-1][:5]
+        return [int(n) for n in top5_idx]
+
+    top5_upper = get_top5(upper_pos)
+    top5_lower = get_top5(lower_pos)
+
+    st.markdown(f"""
+    <div class="top5-box">
+        <div class="top5-title">🔥 เลขเด่นชุดบน (Top 5)</div>
+        <div class="top5-nums">{" &nbsp; - &nbsp; ".join(map(str, top5_upper))}</div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    if top5_lower:
+        st.markdown(f"""
+        <div class="top5-box" style="background:linear-gradient(135deg,#eff6ff,#dbeafe); border-color:#3b82f6;">
+            <div class="top5-title" style="color:#1d4ed8;">🔥 เลขเด่นชุดล่าง (Top 5)</div>
+            <div class="top5-nums" style="color:#1e40af;">{" &nbsp; - &nbsp; ".join(map(str, top5_lower))}</div>
+        </div>
+        """, unsafe_allow_html=True)
 
 if __name__ == "__main__":
     main()
