@@ -1,13 +1,6 @@
 # ============================================================
-# 🤖 LOTTO AI PRO V8.7 FAST ADAPTIVE (AGGRESSIVE SELF-CORRECTING)
+# 🤖 LOTTO AI PRO V8.8 FAST ADAPTIVE (ROBUST SCRAPER + AUTO-CORRECT)
 # ============================================================
-# PERFORMANCE & ADAPTIVE UPGRADES:
-#   1. Multi-threading Position Processing
-#   2. Backtest Feature Selection Caching (Run Once per Pos)
-#   3. Exact Digit Mapping (Fix swapped positions)
-#   4. 2-Miss Fallback Auto-Correction System ⚡ (ปรับไวขึ้น)
-# ============================================================
-
 import re
 import warnings
 import concurrent.futures
@@ -28,9 +21,8 @@ warnings.filterwarnings("ignore")
 # ============================================================
 # 1. STREAMLIT CONFIG
 # ============================================================
-
 st.set_page_config(
-    page_title="Lotto AI V8.7 Auto-Correct",
+    page_title="Lotto AI V8.8 Robust Scraper",
     page_icon="⚡",
     layout="wide",
     initial_sidebar_state="collapsed"
@@ -58,7 +50,6 @@ def inject_css():
 # ============================================================
 # 2. CONSTANTS & REGEX
 # ============================================================
-
 LOTTERY_SOURCES = {
     "หวยไทย": "https://suksan18190.blogspot.com/2026/07/blog-post_07.html",
     "หวยลาว": "https://suksan18190.blogspot.com/2026/07/blog-post.html",
@@ -94,9 +85,8 @@ MONTH_REGEXES = [(m, re.compile(rf"(\d{{1,2}})\s*{re.escape(n)}\s*(\d{{4}})", re
 DATE_FORMAT_REGEX = re.compile(r"(\d{1,4})[/-](\d{1,2})[/-](\d{2,4})")
 
 # ============================================================
-# 3. DATE & DATA EXTRACTION
+# 3. ROBUST DATA EXTRACTION
 # ============================================================
-
 def normalize_date(value):
     if not value: return None
     text = str(value).strip()
@@ -119,10 +109,28 @@ def normalize_date(value):
 
 @st.cache_data(ttl=600, show_spinner=False)
 def fetch_lottery_data(url):
-    headers = {"User-Agent": "Mozilla/5.0"}
+    # ปรับ Headers ให้เหมือนคนใช้งานจริงที่สุด ป้องกันการโดนบล็อก
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+        "Accept-Language": "th-TH,th;q=0.9,en-US;q=0.8,en;q=0.7",
+        "Connection": "keep-alive",
+        "Upgrade-Insecure-Requests": "1"
+    }
+    
     try:
-        response = requests.get(url, headers=headers, timeout=10)
+        response = requests.get(url, headers=headers, timeout=15)
         response.raise_for_status()
+    except requests.exceptions.HTTPError as err:
+        return pd.DataFrame(), f"HTTP Error: เว็บไซต์อาจถูกลบ หรือปฏิเสธการเข้าถึง ({err})"
+    except requests.exceptions.ConnectionError:
+        return pd.DataFrame(), "Connection Error: ไม่สามารถเชื่อมต่อกับเว็บไซต์ได้ โปรดตรวจสอบอินเทอร์เน็ต"
+    except requests.exceptions.Timeout:
+        return pd.DataFrame(), "Timeout: เว็บไซต์ตอบสนองช้าเกินไป (เกิน 15 วินาที)"
+    except Exception as e:
+        return pd.DataFrame(), f"Network Error: {str(e)}"
+
+    try:
         soup = BeautifulSoup(response.text, "html.parser")
         content = soup.find("div", class_=re.compile(r"post-body|entry-content|post-content|content", re.I)) or soup
         
@@ -131,6 +139,7 @@ def fetch_lottery_data(url):
         regex_3d = re.compile(r"(?<!\d)\d{3}(?!\d)")
         regex_2d = re.compile(r"(?<!\d)\d{2}(?!\d)")
 
+        # วิธีที่ 1: หาจากตาราง
         for row in content.find_all("tr"):
             text = " ".join(c.get_text(" ", strip=True) for c in row.find_all(["td", "th"]))
             if not text: continue
@@ -147,11 +156,29 @@ def fetch_lottery_data(url):
             elif three and two:
                 rows.append({"Date": date, "Result_6D": None, "Result_3D": three[0], "Result_2D": two[-1]})
 
-        if not rows: return pd.DataFrame()
+        # วิธีที่ 2: ถ้าตารางพัง ให้หาจากบรรทัดข้อความ (Fallback)
+        if not rows:
+            lines = [x.strip() for x in content.get_text(separator="\n", strip=True).splitlines() if x.strip()]
+            current_date = None
+            for line in lines:
+                date = normalize_date(line)
+                if date: current_date = date
+                if not current_date: continue
+
+                six = regex_6d.findall(line)
+                three = regex_3d.findall(line)
+                two = regex_2d.findall(line)
+
+                if six and two:
+                    rows.append({"Date": current_date, "Result_6D": six[0], "Result_3D": six[0][-3:], "Result_2D": two[-1]})
+                elif three and two:
+                    rows.append({"Date": current_date, "Result_6D": None, "Result_3D": three[0], "Result_2D": two[-1]})
+
+        if not rows:
+            return pd.DataFrame(), "ดึงหน้าเว็บสำเร็จ แต่ระบบไม่พบข้อมูลวันที่/ตัวเลข (รูปแบบเว็บอาจเปลี่ยนไป)"
 
         df = pd.DataFrame(rows)
         df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
-        
         df["Result_3D"] = df["Result_3D"].astype(str).str.extract(r'(\d+)')[0].str[-3:].str.zfill(3)
         df["Result_2D"] = df["Result_2D"].astype(str).str.extract(r'(\d+)')[0].str[-2:].str.zfill(2)
 
@@ -159,9 +186,10 @@ def fetch_lottery_data(url):
             df["Result_6D"] = df["Result_6D"].astype(str).str.extract(r'(\d+)')[0].str[-6:].str.zfill(6)
 
         df = df.dropna(subset=["Date"]).drop_duplicates(subset=["Date"]).sort_values("Date").reset_index(drop=True)
-        return df
-    except Exception:
-        return pd.DataFrame()
+        return df, None
+
+    except Exception as e:
+        return pd.DataFrame(), f"Data Parsing Error: ทำความสะอาดข้อมูลล้มเหลว ({str(e)})"
 
 def is_thai_6d(df):
     return "Result_6D" in df.columns and df["Result_6D"].notna().sum() >= 10
@@ -169,7 +197,6 @@ def is_thai_6d(df):
 # ============================================================
 # 4. FEATURE ENGINEERING
 # ============================================================
-
 def build_features(df, thai_6d=False):
     w = df.copy()
 
@@ -231,7 +258,6 @@ def get_adaptive_config(n):
 # ============================================================
 # 5. ML MODELS & FALLBACK LOGIC
 # ============================================================
-
 def normalize_probability(p):
     p = np.asarray(p, dtype=np.float32)
     p = np.nan_to_num(p, nan=0.0, posinf=0.0, neginf=0.0)
@@ -310,9 +336,8 @@ def compute_fallback_prob(df_feat, pos):
     return normalize_probability(prob)
 
 # ============================================================
-# 6. BACKTEST & PREDICTION PROCESS
+# 6. BACKTEST
 # ============================================================
-
 def run_backtest_for_pos(df_feat, pos, features, cfg, steps):
     results = []
     bt_cfg = cfg.copy()
@@ -359,7 +384,6 @@ def run_backtest_for_pos(df_feat, pos, features, cfg, steps):
 # ============================================================
 # DISPLAY & MAIN
 # ============================================================
-
 def display_card(pos, data, is_hot=True):
     fallback_html = "<div class='fallback-badge'>⚠️ เข้าสู่โหมดแก้ไขตัวเองอัตโนมัติ (ปรับสถิติใหม่เนื่องจากหลุด 2 งวดติด)</div>" if data.get("is_fallback") else ""
     
@@ -392,22 +416,31 @@ def display_card(pos, data, is_hot=True):
 
 def main():
     inject_css()
-    st.markdown("<div class='main-title'>🤖 LOTTO AI PRO V8.7</div>", unsafe_allow_html=True)
-    st.markdown("<div class='subtitle'>⚡ แก้ไขสลับหลัก 100% • ⚠️ มีโหมดตรวจจับและแก้ไขตัวเองหากผิดพลาด 2 งวดติด</div>", unsafe_allow_html=True)
+    st.markdown("<div class='main-title'>🤖 LOTTO AI PRO V8.8</div>", unsafe_allow_html=True)
+    st.markdown("<div class='subtitle'>⚡ DEBUG SCRAPER • แจ้งเตือนข้อผิดพลาดเว็บ • AUTO-CORRECT</div>", unsafe_allow_html=True)
 
     c1, c2 = st.columns(2)
     lottery = c1.selectbox("🏷️ เลือกประเภทหวย", list(LOTTERY_SOURCES.keys()))
     selected_day = c2.selectbox("📅 วันเป้าหมาย", ["อัตโนมัติ"] + DOW_NAMES)
 
-    if not st.button("🚀 เริ่มวิเคราะห์ V8.7 AUTO-CORRECT", type="primary", use_container_width=True):
+    if not st.button("🚀 เริ่มวิเคราะห์ V8.8", type="primary", use_container_width=True):
         return
 
-    with st.spinner("📥 ประมวลผล Backtest & Auto-Correction (Multi-thread)..."):
-        df = fetch_lottery_data(LOTTERY_SOURCES[lottery])
-        if len(df) < 50:
-            st.error(f"❌ ข้อมูลมีเพียง {len(df)} งวด (ต้องการอย่างน้อย 50 งวด)")
+    with st.spinner("📥 กำลังดึงข้อมูลจากเว็บ..."):
+        # รับค่า df และ Error Message จากฟังก์ชันใหม่
+        df, error_msg = fetch_lottery_data(LOTTERY_SOURCES[lottery])
+        
+        # แจ้งเตือนสาเหตุที่ดึงข้อมูลไม่ได้ บนหน้าจอ
+        if error_msg:
+            st.error(f"❌ มีปัญหาการดึงข้อมูล: {error_msg}")
+            st.info("💡 คำแนะนำ: ลองเปิดลิงก์บนเว็บบราวเซอร์ปกติว่าเข้าได้หรือไม่ หรืออาจต้องรอสักพักแล้วกดใหม่")
             return
 
+        if len(df) < 50:
+            st.error(f"❌ ข้อมูลมีเพียง {len(df)} งวด (ระบบต้องการอย่างน้อย 50 งวดเพื่อวิเคราะห์แม่นยำ)")
+            return
+
+    with st.spinner("🧠 ข้อมูลพร้อม! กำลังประมวลผล AI & Backtest (Multi-thread)..."):
         thai_6d = (lottery == "หวยไทย" and is_thai_6d(df))
         positions = THAI_POSITIONS if thai_6d else NORMAL_POSITIONS
 
@@ -429,31 +462,24 @@ def main():
         bt_steps = min(15, max(5, len(df) - cfg["min_train"])) 
 
         def process_position(pos):
-            # 1. รัน Prediction ปกติ
             X = feat[features].iloc[:-1].tail(cfg["train_window"])
             y = feat[pos].astype(np.int8).iloc[:-1].tail(cfg["train_window"])
             X_test = feat[features].iloc[[-1]]
             res_final = run_system_pair(X, y, X_test, cfg)
             
-            # 2. รัน Backtest
             res_bt = run_backtest_for_pos(feat, pos, features, cfg, steps=bt_steps)
             is_fallback = False
             
-            # 3. ⚠️ LOGIC SELF-CORRECT (ตรวจสอบ 2 งวดติด)
             if res_bt is not None and len(res_bt) >= 2:
                 recent_2 = res_bt.tail(2)
                 if all(x == "❌ หลุด" for x in recent_2["ผลเด่น"]):
-                    # ถ้าระบบหลักพัง ให้ดึงสถิติความน่าจะเป็นใหม่มาใช้ทับ (Fallback)
                     fallback_prob = compute_fallback_prob(feat, pos)
                     res_final["probability"] = fallback_prob
-                    
                     order_hot = np.argsort(fallback_prob)[::-1]
                     order_dead = np.argsort(fallback_prob)
-                    
                     res_final["hot_results"] = [(int(n), float(fallback_prob[n])) for n in order_hot[:3]]
                     dead_score = normalize_probability(1.0 - fallback_prob)
                     res_final["dead_results"] = [(int(n), float(dead_score[n])) for n in order_dead[:3]]
-                    
                     res_final["confidence"] = float(fallback_prob[order_hot[0]]) - float(fallback_prob[order_hot[1]])
                     res_final["hot_coverage"] = float(fallback_prob[order_hot[:3]].sum())
                     is_fallback = True
@@ -474,7 +500,8 @@ def main():
     # ========================================================
     # SUMMARY
     # ========================================================
-    st.markdown("### 📊 สรุปผล AI (เรียงหลักถูกต้อง 100%)")
+    st.success(f"✅ ข้อมูลล่าสุดที่ใช้ประมวลผล: งวดวันที่ {last_date.strftime('%d/%m/%Y')}")
+    st.markdown("### 📊 สรุปผล AI")
     summary = []
     for pos in positions:
         hot = final[pos]["hot_results"]
@@ -511,7 +538,7 @@ def main():
                 with cols[1]: display_card(positions[i + 1], final[positions[i + 1]], False)
 
     with t3:
-        st.markdown("### 📜 ผลจริง 10 งวดล่าสุด (ตรวจสอบความถูกต้องของการเรียงหลัก)")
+        st.markdown("### 📜 ผลจริง 10 งวดล่าสุด")
         history_cols = ["Date"] + positions
         history = feat.iloc[:-1].tail(10)[history_cols].copy().sort_values("Date", ascending=False)
         history["Date"] = history["Date"].dt.strftime("%d/%m/%Y")
@@ -523,14 +550,11 @@ def main():
         st.dataframe(history, use_container_width=True, hide_index=True)
 
     with t4:
-        st.info("💡 หากโมเดลใดมีผลการทายหลุดติดต่อกัน 2 ครั้ง ในส่วนนี้จะสั่งการให้ระบบเปิด Fallback Mode อัตโนมัติ")
         for pos in positions:
             bt_df = final[pos]["backtest"]
             if bt_df is None or bt_df.empty: continue
             
             hot_rate = (bt_df["ผลเด่น"] == "✅ เข้า").sum() / len(bt_df)
-            dead_rate = (bt_df["ผลดับ"] == "✅ ผ่าน").sum() / len(bt_df)
-            
             title = f"📊 {POSITION_LABELS[pos]} | Win Rate {hot_rate*100:.0f}%"
             if final[pos]["is_fallback"]: title += " ⚠️ (ใช้งาน Fallback Mode แล้ว)"
             
