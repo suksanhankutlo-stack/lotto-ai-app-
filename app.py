@@ -1,554 +1,1869 @@
 # ============================================================
-# 🤖 LOTTO AI PRO V8.9 CLEAN & TOP 5 BOTTOM (AUTO-CORRECT)
+# 🧠 LOTTO AI
+# AUTO SYMBOLIC EQUATION V2
+# POSITION SEARCH ENGINE
 # ============================================================
-import re
-import warnings
-import concurrent.futures
-from datetime import timedelta
+#
+# ค้นหาสูตรอัตโนมัติแบบ "แยกทีละหลัก"
+#
+# หลักร้อย  -> สูตรที่ดีที่สุด
+# หลักสิบ   -> สูตรที่ดีที่สุด
+# หลักหน่วย -> สูตรที่ดีที่สุด
+#
+# INPUT
+#   3D = เลข 3 ตัว
+#   2D = เลข 2 ตัว
+#
+# FEATURES
+#   L1 / L2 / L3 / L5
+#   H / T / O
+#   T2 / O2
+#   SUM3 / SUM2
+#   ABS
+#   + - * /
+#   MOD 10
+#   MOD 9
+#   DIGIT SUM
+#   CROSS POSITION
+#
+# VALIDATION
+#   Walk Forward
+#   Recent 10
+#   Stability
+#   Overfit Penalty
+#
+# ============================================================
 
-import numpy as np
-import pandas as pd
-import requests
 import streamlit as st
-from bs4 import BeautifulSoup
-from sklearn.ensemble import (
-    ExtraTreesClassifier,
-    HistGradientBoostingClassifier
-)
+import pandas as pd
+import numpy as np
+import itertools
+import re
+import math
+import warnings
 
 warnings.filterwarnings("ignore")
 
+
 # ============================================================
-# 1. STREAMLIT CONFIG
+# PAGE
 # ============================================================
+
 st.set_page_config(
-    page_title="Lotto AI V8.9 Top5 Bottom",
-    page_icon="⚡",
-    layout="wide",
-    initial_sidebar_state="collapsed"
+    page_title="Lotto AI Symbolic Equation V2",
+    page_icon="🧠",
+    layout="wide"
 )
 
-def inject_css():
-    st.markdown("""
-    <style>
-    .stApp { background: #f4f6f9; font-family: 'Kanit', sans-serif; }
-    .main-title { text-align:center; font-size:2.2rem; font-weight:900; color:#1e293b; }
-    .subtitle { text-align:center; color:#64748b; font-size:.9rem; margin-bottom:25px; }
-    .status-card { background:linear-gradient(135deg,#eff6ff,#dbeafe); border-radius:12px; padding:15px; text-align:center; color:#1e40af; font-weight:600; margin-bottom:20px; }
-    .hot-card { background:white; border-left:8px solid #10b981; border-radius:12px; padding:20px; margin:10px 0; box-shadow:0 4px 10px rgba(0,0,0,.05); }
-    .dead-card { background:white; border-left:8px solid #ef4444; border-radius:12px; padding:20px; margin:10px 0; box-shadow:0 4px 10px rgba(0,0,0,.05); }
-    .position-title { font-size:1.2rem; font-weight:800; color:#334155; margin-bottom:10px; border-bottom:2px solid #f1f5f9; padding-bottom:5px; }
-    .hot-number { font-size:2.5rem; font-weight:900; letter-spacing:4px; text-align:center; color:#10b981; }
-    .dead-number { font-size:2.5rem; font-weight:900; letter-spacing:4px; text-align:center; color:#ef4444; text-decoration:line-through; text-decoration-color:rgba(239,68,68,.4); }
-    .prob-text { text-align:center; color:#475569; font-size:.95rem; font-weight:600; margin-top:10px; padding:10px; background:#f8fafc; border-radius:8px; }
-    .confidence { text-align:center; font-size:.85rem; font-weight:600; margin-top:10px; color:#64748b; }
-    .top5-box { background:linear-gradient(135deg,#ecfdf5,#d1fae5); border:2px solid #10b981; border-radius:12px; padding:20px; margin-top:20px; text-align:center; box-shadow:0 4px 10px rgba(0,0,0,.05); }
-    .top5-title { font-size:1.3rem; font-weight:900; color:#065f46; margin-bottom:10px; }
-    .top5-nums { font-size:2rem; font-weight:900; letter-spacing:6px; color:#047857; }
-    div.stButton > button { width:100%; min-height:50px; border-radius:10px; font-size:1.1rem; font-weight:800; }
-    </style>
-    """, unsafe_allow_html=True)
 
 # ============================================================
-# 2. CONSTANTS & REGEX
+# TITLE
 # ============================================================
-LOTTERY_SOURCES = {
-    "หวยไทย": "https://suksan18190.blogspot.com/2026/07/blog-post_07.html",
-    "หวยลาว": "https://suksan18190.blogspot.com/2026/07/blog-post.html",
-    "หวยฮานอย": "https://suksan18190.blogspot.com/2026/07/blog-post_08.html",
-    "หวยธกส": "https://suksan18190.blogspot.com/2026/07/blog-post_12.html",
-    "หวยออมสิน": "https://suksan18190.blogspot.com/2026/07/blog-post_525.html",
-    "หวยมาเลย์": "https://suksan18190.blogspot.com/2026/07/blog-post_10.html",
-    "หวยหุ้นไทยเย็น": "https://suksan18190.blogspot.com/2026/07/blog-post_11.html",
-    "หวยหุ้นนิเคอิบ่าย": "https://suksan18190.blogspot.com/2026/07/blog-post_412.html",
-    "หวยหุ้นฮั่งเส็งบ่าย": "https://suksan18190.blogspot.com/2026/07/blog-post_229.html",
-    "หวยหุ้นจีนบ่าย": "https://suksan18190.blogspot.com/2026/07/blog-post_162.html",
-}
 
-DOW_NAMES = ["จันทร์", "อังคาร", "พุธ", "พฤหัสบดี", "ศุกร์", "เสาร์", "อาทิตย์"]
-THAI_POSITIONS = ["H1", "H2", "H3", "H4", "H5", "H6", "T2", "O2"]
-NORMAL_POSITIONS = ["H", "T", "O", "T2", "O2"]
+st.title("🧠 LOTTO AI — AUTO SYMBOLIC EQUATION V2")
 
-POSITION_LABELS = {
-    "H1": "หลักแสน", "H2": "หลักหมื่น", "H3": "หลักพัน",
-    "H4": "หลักร้อยบน", "H5": "หลักสิบบน", "H6": "หลักหน่วยบน",
-    "H": "หลักร้อยบน", "T": "หลักสิบบน", "O": "หลักหน่วยบน",
-    "T2": "หลักสิบล่าง", "O2": "หลักหน่วยล่าง"
-}
+st.markdown("""
+### Position Search Engine
 
-THAI_MONTHS = {
-    "มกราคม": 1, "กุมภาพันธ์": 2, "มีนาคม": 3, "เมษายน": 4, "พฤษภาคม": 5, "มิถุนายน": 6,
-    "กรกฎาคม": 7, "สิงหาคม": 8, "กันยายน": 9, "ตุลาคม": 10, "พฤศจิกายน": 11, "ธันวาคม": 12,
-    "ม.ค.": 1, "ก.พ.": 2, "มี.ค.": 3, "เม.ย.": 4, "พ.ค.": 5, "มิ.ย.": 6,
-    "ก.ค.": 7, "ส.ค.": 8, "ก.ย.": 9, "ต.ค.": 10, "พ.ย.": 11, "ธ.ค.": 12
-}
+ระบบจะค้นหาสมการแบบอัตโนมัติจากข้อมูลย้อนหลัง
 
-MONTH_REGEXES = [(m, re.compile(rf"(\d{{1,2}})\s*{re.escape(n)}\s*(\d{{4}})", re.I)) for n, m in THAI_MONTHS.items()]
-DATE_FORMAT_REGEX = re.compile(r"(\d{1,4})[/-](\d{1,2})[/-](\d{2,4})")
+**เลข 3 หลัก**
+- H = หลักร้อย
+- T = หลักสิบ
+- O = หลักหน่วย
+
+**เลข 2 หลัก**
+- T2 = หลักสิบ
+- O2 = หลักหน่วย
+
+แล้วค้นหาสูตรแยกเป็น
+
+`หลักร้อย → สูตรของหลักร้อย`
+
+`หลักสิบ → สูตรของหลักสิบ`
+
+`หลักหน่วย → สูตรของหลักหน่วย`
+""")
+
 
 # ============================================================
-# 3. SCRAPER
+# SIDEBAR
 # ============================================================
-def normalize_date(value):
-    if not value: return None
-    text = str(value).strip()
-    for month, regex in MONTH_REGEXES:
-        match = regex.search(text)
-        if match:
-            y = int(match.group(2))
-            if y >= 2400: y -= 543
-            try: return pd.Timestamp(y, month, int(match.group(1)))
-            except: return None
-    match = DATE_FORMAT_REGEX.search(text)
-    if match:
-        a, b, c = map(int, match.groups())
-        y, m, d = ((a, b, c) if a >= 1000 else (c, b, a))
-        if y < 100: y += 2000
-        if y >= 2400: y -= 543
-        try: return pd.Timestamp(y, m, d)
-        except: pass
-    return None
 
-@st.cache_data(ttl=600, show_spinner=False)
-def fetch_lottery_data(url):
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-    }
+st.sidebar.header("⚙️ SETTINGS")
+
+min_history = st.sidebar.slider(
+    "จำนวนงวดขั้นต่ำก่อนเริ่มค้นหา",
+    20,
+    200,
+    40
+)
+
+top_n = st.sidebar.slider(
+    "จำนวนสูตรที่เก็บต่อหลัก",
+    3,
+    30,
+    10
+)
+
+recent_window = st.sidebar.slider(
+    "Recent Window",
+    5,
+    30,
+    10
+)
+
+max_formulas = st.sidebar.slider(
+    "จำนวนสูตรสูงสุดที่จะทดสอบ",
+    500,
+    20000,
+    5000,
+    step=500
+)
+
+st.sidebar.markdown("---")
+
+st.sidebar.info(
+    "ระบบนี้ใช้การค้นหาสมการจากข้อมูลย้อนหลัง "
+    "และ Walk-forward validation "
+    "เพื่อช่วยลดการจำข้อมูลย้อนหลังมากเกินไป"
+)
+
+
+# ============================================================
+# HELPERS
+# ============================================================
+
+def clean_number(x, width):
+
+    if pd.isna(x):
+        return None
+
+    s = str(x).strip()
+
+    s = re.sub(r"\.0$", "", s)
+
+    digits = re.sub(r"\D", "", s)
+
+    if digits == "":
+        return None
+
+    return digits.zfill(width)[-width:]
+
+
+def digit_sum(x):
+
+    s = str(int(x)).zfill(3)
+
+    return sum(int(c) for c in s)
+
+
+def reverse_number(x, width):
+
+    return int(
+        str(int(x)).zfill(width)[::-1]
+    )
+
+
+def safe_div(a, b):
+
+    if abs(b) < 1e-12:
+        return None
+
+    return a / b
+
+
+def mod10(x):
+
+    if x is None:
+        return None
+
+    return int(round(x)) % 10
+
+
+def mod9(x):
+
+    if x is None:
+        return None
+
+    return int(round(x)) % 9
+
+
+# ============================================================
+# LOAD DATA
+# ============================================================
+
+st.header("📥 1. โหลดข้อมูล")
+
+uploaded = st.file_uploader(
+    "อัปโหลด CSV",
+    type=["csv"]
+)
+
+df = None
+
+
+if uploaded is not None:
+
     try:
-        response = requests.get(url, headers=headers, timeout=15)
-        response.raise_for_status()
+
+        df = pd.read_csv(
+            uploaded,
+            dtype=str
+        )
+
+        st.success(
+            f"โหลดข้อมูลสำเร็จ {len(df):,} งวด"
+        )
+
+        st.write(
+            "Columns:",
+            list(df.columns)
+        )
+
     except Exception as e:
-        return pd.DataFrame(), f"Network Error: {str(e)}"
 
-    try:
-        soup = BeautifulSoup(response.text, "html.parser")
-        content = soup.find("div", class_=re.compile(r"post-body|entry-content|post-content|content", re.I)) or soup
-        
-        rows = []
-        regex_6d = re.compile(r"(?<!\d)\d{6}(?!\d)")
-        regex_3d = re.compile(r"(?<!\d)\d{3}(?!\d)")
-        regex_2d = re.compile(r"(?<!\d)\d{2}(?!\d)")
+        st.error(
+            f"อ่านไฟล์ไม่ได้: {e}"
+        )
 
-        for row in content.find_all("tr"):
-            text = " ".join(c.get_text(" ", strip=True) for c in row.find_all(["td", "th"]))
-            if not text: continue
-            date = normalize_date(text)
-            if not date: continue
 
-            six = regex_6d.findall(text)
-            three = regex_3d.findall(text)
-            two = regex_2d.findall(text)
+# ============================================================
+# MANUAL DATA
+# ============================================================
 
-            if six and two:
-                rows.append({"Date": date, "Result_6D": six[0], "Result_3D": six[0][-3:], "Result_2D": two[-1]})
-            elif three and two:
-                rows.append({"Date": date, "Result_6D": None, "Result_3D": three[0], "Result_2D": two[-1]})
+st.subheader("หรือกรอกข้อมูลเอง")
 
-        if not rows:
-            lines = [x.strip() for x in content.get_text(separator="\n", strip=True).splitlines() if x.strip()]
-            current_date = None
-            for line in lines:
-                date = normalize_date(line)
-                if date: current_date = date
-                if not current_date: continue
+manual_text = st.text_area(
+    "รูปแบบ: 3D,2D ต่อหนึ่งงวด",
+    value="",
+    height=120,
+    placeholder="""615,53
+222,04
+381,21
+742,72"""
+)
 
-                six = regex_6d.findall(line)
-                three = regex_3d.findall(line)
-                two = regex_2d.findall(line)
 
-                if six and two:
-                    rows.append({"Date": current_date, "Result_6D": six[0], "Result_3D": six[0][-3:], "Result_2D": two[-1]})
-                elif three and two:
-                    rows.append({"Date": current_date, "Result_6D": None, "Result_3D": three[0], "Result_2D": two[-1]})
+if manual_text.strip():
 
-        if not rows: return pd.DataFrame(), "ไม่พบข้อมูลตัวเลข"
+    rows = []
+
+    for line in manual_text.strip().splitlines():
+
+        parts = re.split(
+            r"[,;\\s]+",
+            line.strip()
+        )
+
+        if len(parts) >= 2:
+
+            rows.append({
+                "3D": parts[0],
+                "2D": parts[1]
+            })
+
+    if rows:
 
         df = pd.DataFrame(rows)
-        df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
-        df["Result_3D"] = df["Result_3D"].astype(str).str.extract(r'(\d+)')[0].str[-3:].str.zfill(3)
-        df["Result_2D"] = df["Result_2D"].astype(str).str.extract(r'(\d+)')[0].str[-2:].str.zfill(2)
 
-        if "Result_6D" in df.columns:
-            df["Result_6D"] = df["Result_6D"].astype(str).str.extract(r'(\d+)')[0].str[-6:].str.zfill(6)
+        st.success(
+            f"รับข้อมูล {len(df):,} งวด"
+        )
 
-        df = df.dropna(subset=["Date"]).drop_duplicates(subset=["Date"]).sort_values("Date").reset_index(drop=True)
-        return df, None
-    except Exception as e:
-        return pd.DataFrame(), str(e)
-
-def is_thai_6d(df):
-    return "Result_6D" in df.columns and df["Result_6D"].notna().sum() >= 10
 
 # ============================================================
-# 4. FEATURE ENGINEERING
+# AUTO DETECT COLUMNS
 # ============================================================
-def build_features(df, thai_6d=False):
-    w = df.copy()
-    if thai_6d:
-        six = w["Result_6D"].fillna("000000").astype(str).str.zfill(6)
-        for i in range(6): w[f"H{i+1}"] = six.str[i].astype(np.int8)
-    else:
-        three = w["Result_3D"].astype(str).str.zfill(3)
-        w["H"] = three.str[0].astype(np.int8) 
-        w["T"] = three.str[1].astype(np.int8) 
-        w["O"] = three.str[2].astype(np.int8) 
 
-    two = w["Result_2D"].astype(str).str.zfill(2)
-    w["T2"] = two.str[0].astype(np.int8) 
-    w["O2"] = two.str[1].astype(np.int8) 
+def find_column(columns, candidates):
 
-    dt = w["Date"].dt
-    w["DOW"] = dt.dayofweek.astype(np.int8)
-    w["DAY"] = dt.day.astype(np.int8)
-    w["MONTH"] = dt.month.astype(np.int8)
-    w["DOW_SIN"] = np.sin(2 * np.pi * w["DOW"] / 7).astype(np.float32)
-    w["DOW_COS"] = np.cos(2 * np.pi * w["DOW"] / 7).astype(np.float32)
-    
-    positions = THAI_POSITIONS if thai_6d else NORMAL_POSITIONS
-    for pos in positions:
-        s = w[pos]
-        p = s.shift(1)
-        for lag in (1, 2, 3, 5): w[f"{pos}_L{lag}"] = s.shift(lag)
-        for window in (5, 10, 20): w[f"{pos}_M{window}"] = p.rolling(window, min_periods=2).mean()
-        w[f"{pos}_D1"] = s.shift(1) - s.shift(2)
-        w[f"{pos}_MOMENTUM"] = p - s.shift(4)
-        roll_20 = p.rolling(20, min_periods=2)
-        w[f"{pos}_VOL20"] = roll_20.max() - roll_20.min()
-        w[f"{pos}_ODD"] = p % 2
-        w[f"{pos}_HIGH"] = (p >= 5).astype(np.float32)
-        w[f"{pos}_REPEAT"] = (p == s.shift(2)).astype(np.float32)
-
-    return w.replace([np.inf, -np.inf], np.nan).astype(np.float32, errors="ignore")
-
-def get_features(thai_6d):
-    base = ["DOW", "DAY", "MONTH", "DOW_SIN", "DOW_COS"]
-    positions = THAI_POSITIONS if thai_6d else NORMAL_POSITIONS
-    for pos in positions:
-        base.extend([f"{pos}_L{lag}" for lag in (1, 2, 3, 5)])
-        base.extend([f"{pos}_M{w}" for w in (5, 10, 20)])
-        base.extend([f"{pos}_D1", f"{pos}_MOMENTUM", f"{pos}_VOL20", f"{pos}_ODD", f"{pos}_HIGH", f"{pos}_REPEAT"])
-    return list(dict.fromkeys(base))
-
-def get_adaptive_config(n):
-    if n >= 700: return {"min_train": 140, "train_window": 500, "trees": 55, "depth": 7, "leaf": 3, "selected_features": 24, "selector_trees": 8, "decay": 0.997}
-    if n >= 400: return {"min_train": 110, "train_window": 400, "trees": 45, "depth": 6, "leaf": 3, "selected_features": 22, "selector_trees": 7, "decay": 0.996}
-    if n >= 200: return {"min_train": 90, "train_window": 300, "trees": 38, "depth": 5, "leaf": 3, "selected_features": 19, "selector_trees": 6, "decay": 0.994}
-    return {"min_train": 60, "train_window": 220, "trees": 30, "depth": 4, "leaf": 3, "selected_features": 16, "selector_trees": 5, "decay": 0.992}
-
-# ============================================================
-# 5. ML MODELS & FALLBACK LOGIC
-# ============================================================
-def normalize_probability(p):
-    p = np.asarray(p, dtype=np.float32)
-    p = np.nan_to_num(p, nan=0.0, posinf=0.0, neginf=0.0)
-    p = np.clip(p, 1e-9, None)
-    total = p.sum()
-    if total <= 0: return np.ones(10, dtype=np.float32) / 10
-    return (p / total).astype(np.float32)
-
-def make_recent_weights(n, decay):
-    distance = (n - 1 - np.arange(n))
-    weights = (decay ** distance)
-    return (weights / weights.mean()).astype(np.float32)
-
-def select_features_once(X, y, max_features, cfg):
-    valid = [c for c in X.columns if X[c].nunique(dropna=False) > 1]
-    if len(valid) <= max_features: return valid
-    try:
-        selector = ExtraTreesClassifier(n_estimators=cfg["selector_trees"], max_depth=4, n_jobs=-1, random_state=123)
-        selector.fit(X[valid].fillna(0).astype(np.float32), y)
-        return [valid[i] for i in np.argsort(selector.feature_importances_)[::-1][:max_features]]
-    except: return valid[:max_features]
-
-def ensemble_probability(X_train, y_train, X_test, cfg, selected):
-    A = X_train[selected].astype(np.float32).fillna(0)
-    B = X_test[selected].astype(np.float32).fillna(0)
-    sample_weights = make_recent_weights(len(A), cfg["decay"])
-    
-    model_outputs = []
-    try:
-        model_et = ExtraTreesClassifier(n_estimators=cfg["trees"], max_depth=cfg["depth"], min_samples_leaf=cfg["leaf"], max_features="sqrt", n_jobs=-1, random_state=42)
-        model_et.fit(A, y_train, sample_weight=sample_weights)
-        p = np.zeros(10, dtype=np.float32)
-        for cls, prob in zip(model_et.classes_, model_et.predict_proba(B)[0]):
-            if 0 <= cls <= 9: p[int(cls)] = prob
-        model_outputs.append((normalize_probability(p), 0.40))
-    except: pass
-
-    try:
-        model_hgb = HistGradientBoostingClassifier(max_iter=max(30, int(cfg["trees"]*0.75)), max_leaf_nodes=15, learning_rate=0.035, random_state=52)
-        model_hgb.fit(A, y_train, sample_weight=sample_weights)
-        p = np.zeros(10, dtype=np.float32)
-        for cls, prob in zip(model_hgb.classes_, model_hgb.predict_proba(B)[0]):
-            if 0 <= cls <= 9: p[int(cls)] = prob
-        model_outputs.append((normalize_probability(p), 0.60))
-    except: pass
-
-    if not model_outputs: return np.ones(10, dtype=np.float32) / 10
-    return normalize_probability(sum(p * w for p, w in model_outputs))
-
-def run_system_pair(X_train, y_train, X_test, cfg):
-    selected = select_features_once(X_train, y_train, cfg["selected_features"], cfg)
-    prob = ensemble_probability(X_train, y_train, X_test, cfg, selected)
-
-    order_hot = np.argsort(prob)[::-1]
-    order_dead = np.argsort(prob)
-    return {
-        "probability": prob,
-        "hot_results": [(int(n), float(prob[n])) for n in order_hot[:3]],
-        "dead_results": [(int(n), float(normalize_probability(1.0 - prob)[n])) for n in order_dead[:3]],
-        "confidence": float(prob[order_hot[0]]) - float(prob[order_hot[1]]),
-        "hot_coverage": float(prob[order_hot[:3]].sum()),
-        "selected": selected
+    lower_map = {
+        str(c).lower(): c
+        for c in columns
     }
 
-def compute_fallback_prob(df_feat, pos):
-    recent = df_feat[pos].iloc[-61:-1].dropna().astype(int)
-    freq = np.zeros(10)
-    weights = np.linspace(0.2, 1.0, len(recent)) 
-    for val, w in zip(recent, weights): freq[val] += w
-    prob = freq / (freq.sum() + 1e-9)
-    return normalize_probability((prob * 0.7) + 0.03)
+    for candidate in candidates:
+
+        if candidate.lower() in lower_map:
+
+            return lower_map[
+                candidate.lower()
+            ]
+
+    # fuzzy
+
+    for c in columns:
+
+        cl = str(c).lower()
+
+        for candidate in candidates:
+
+            if candidate.lower() in cl:
+
+                return c
+
+    return None
+
+
+if df is not None:
+
+    col3 = find_column(
+        df.columns,
+        [
+            "3d",
+            "3D",
+            "result3",
+            "three",
+            "three_digit",
+            "เลข3ตัว",
+            "สามตัว"
+        ]
+    )
+
+    col2 = find_column(
+        df.columns,
+        [
+            "2d",
+            "2D",
+            "result2",
+            "two",
+            "two_digit",
+            "เลข2ตัว",
+            "สองตัว"
+        ]
+    )
+
+    if col3 is None or col2 is None:
+
+        st.warning(
+            "ไม่สามารถหา column 3D / 2D ได้อัตโนมัติ"
+        )
+
+        c1, c2 = st.columns(2)
+
+        with c1:
+
+            col3 = st.selectbox(
+                "เลือก Column เลข 3 ตัว",
+                df.columns
+            )
+
+        with c2:
+
+            col2 = st.selectbox(
+                "เลือก Column เลข 2 ตัว",
+                df.columns
+            )
+
+    data = pd.DataFrame()
+
+    data["3D"] = df[col3].apply(
+        lambda x: clean_number(x, 3)
+    )
+
+    data["2D"] = df[col2].apply(
+        lambda x: clean_number(x, 2)
+    )
+
+    data = data.dropna().reset_index(
+        drop=True
+    )
+
+else:
+
+    data = None
+
 
 # ============================================================
-# 6. BACKTEST
+# SHOW DATA
 # ============================================================
-def run_backtest_for_pos(df_feat, pos, features, cfg, steps):
-    results = []
-    bt_cfg = cfg.copy()
-    bt_cfg["trees"] = max(18, cfg["trees"] // 2)
-    bt_cfg["selected_features"] = max(12, cfg["selected_features"] - 3)
-    
-    target_start = len(df_feat) - 1
-    start_idx = max(0, target_start - bt_cfg["train_window"])
-    X_tr_full = df_feat[features].iloc[start_idx:target_start]
-    y_tr_full = df_feat[pos].astype(np.int8).iloc[start_idx:target_start]
-    selected_for_bt = select_features_once(X_tr_full, y_tr_full, bt_cfg["selected_features"], bt_cfg) if len(X_tr_full) >= bt_cfg["min_train"] else features[:10]
 
-    for step in range(steps, 0, -1):
-        target_idx = len(df_feat) - 1 - step
-        if target_idx <= 0: continue
-        start = max(0, target_idx - bt_cfg["train_window"])
-        X_train = df_feat[features].iloc[start:target_idx]
-        y_train = df_feat[pos].astype(np.int8).iloc[start:target_idx]
-        if len(X_train) < bt_cfg["min_train"]: continue
-            
-        X_test = df_feat[features].iloc[[target_idx]]
-        actual = int(df_feat[pos].iloc[target_idx])
-        date_val = pd.to_datetime(df_feat["Date"].iloc[target_idx]).strftime("%d/%m/%Y")
+if data is not None:
 
-        prob = ensemble_probability(X_train, y_train, X_test, bt_cfg, selected_for_bt)
-        order_hot = np.argsort(prob)[::-1]
-        hot_top3 = [int(n) for n in order_hot[:3]]
-        dead_top3 = [int(n) for n in np.argsort(prob)[:3]]
+    st.subheader("ข้อมูลที่ใช้")
 
-        results.append({
-            "วันที่": date_val,
-            "ผลจริง": actual,
-            "อันดับจริง": int(np.where(order_hot == actual)[0][0]) + 1,
-            "ทายเด่น Top3": " - ".join(map(str, hot_top3)),
-            "ผลเด่น": "✅ เข้า" if actual in hot_top3 else "❌ หลุด",
-            "ทายดับ Top3": " - ".join(map(str, dead_top3)),
-            "ผลดับ": "✅ ผ่าน" if actual not in dead_top3 else "❌ ตาย"
-        })
-    return pd.DataFrame(results)
+    st.dataframe(
+        data.tail(20),
+        use_container_width=True
+    )
+
 
 # ============================================================
-# DISPLAY & MAIN
+# CREATE RAW VARIABLES
 # ============================================================
-def display_card(pos, data, is_hot=True):
-    if is_hot:
-        items = data["hot_results"]
-        nums = " - ".join(str(n) for n, p in items)
-        probs = " | ".join(f"{n}: {p*100:.1f}%" for n, p in items)
-        html = f"""
-        <div class="hot-card">
-            <div class="position-title">🎯 {POSITION_LABELS[pos]}</div>
-            <div class="hot-number">{nums}</div>
-            <div class="prob-text">🔥 HOT TOP-3<br>{probs}</div>
-            <div class="confidence">📌 Gap: {data["confidence"]*100:.1f}% &nbsp;|&nbsp; Coverage: {data["hot_coverage"]*100:.1f}%</div>
-        </div>
-        """
+
+def make_raw_variables(row):
+
+    n3 = str(row["3D"]).zfill(3)
+    n2 = str(row["2D"]).zfill(2)
+
+    H = int(n3[0])
+    T = int(n3[1])
+    O = int(n3[2])
+
+    T2 = int(n2[0])
+    O2 = int(n2[1])
+
+    S3 = H + T + O
+    S2 = T2 + O2
+
+    return {
+
+        "H": H,
+        "T": T,
+        "O": O,
+
+        "T2": T2,
+        "O2": O2,
+
+        "S3": S3,
+        "S2": S2,
+
+        "HT": abs(H - T),
+        "TO": abs(T - O),
+        "HO": abs(H - O),
+
+        "HT2": abs(H - T2),
+        "HO2": abs(H - O2),
+
+        "TT2": abs(T - T2),
+        "TO2": abs(T - O2),
+
+        "R3": reverse_number(
+            n3,
+            3
+        ),
+
+        "R2": reverse_number(
+            n2,
+            2
+        ),
+
+        "DS3": digit_sum(n3),
+
+        "D2": T2 + O2
+    }
+
+
+# ============================================================
+# BUILD LAG FEATURES
+# ============================================================
+
+def build_features(data):
+
+    records = []
+
+    for i in range(len(data)):
+
+        record = {}
+
+        for lag in [1, 2, 3, 5]:
+
+            idx = i - lag
+
+            if idx >= 0:
+
+                values = make_raw_variables(
+                    data.iloc[idx]
+                )
+
+                for key, value in values.items():
+
+                    record[
+                        f"{key}_L{lag}"
+                    ] = value
+
+        records.append(record)
+
+    return pd.DataFrame(
+        records
+    ).fillna(0)
+
+
+# ============================================================
+# TARGET DIGITS
+# ============================================================
+
+def target_digit(data, i, position):
+
+    s = str(
+        data.iloc[i]["3D"]
+    ).zfill(3)
+
+    if position == "H":
+        return int(s[0])
+
+    if position == "T":
+        return int(s[1])
+
+    return int(s[2])
+
+
+# ============================================================
+# FORMULA OBJECT
+# ============================================================
+
+class Formula:
+
+    def __init__(
+        self,
+        name,
+        func
+    ):
+
+        self.name = name
+        self.func = func
+
+    def calculate(self, row):
+
+        try:
+
+            value = self.func(row)
+
+            if value is None:
+                return None
+
+            if not np.isfinite(value):
+                return None
+
+            return int(round(value)) % 10
+
+        except:
+
+            return None
+
+
+# ============================================================
+# FORMULA GENERATOR
+# ============================================================
+
+def generate_formulas():
+
+    formulas = []
+
+    # --------------------------------------------------------
+    # BASE VARIABLES
+    # --------------------------------------------------------
+
+    base = []
+
+    for lag in [1, 2, 3, 5]:
+
+        for name in [
+
+            "H",
+            "T",
+            "O",
+
+            "T2",
+            "O2",
+
+            "S3",
+            "S2",
+
+            "HT",
+            "TO",
+            "HO",
+
+            "HT2",
+            "HO2",
+
+            "TT2",
+            "TO2",
+
+            "R3",
+            "R2",
+
+            "DS3",
+            "D2"
+
+        ]:
+
+            base.append(
+                f"{name}_L{lag}"
+            )
+
+    # --------------------------------------------------------
+    # SINGLE
+    # --------------------------------------------------------
+
+    for a in base:
+
+        formulas.append(
+            Formula(
+                a,
+                lambda row, a=a:
+                    row.get(a, 0)
+            )
+        )
+
+    # --------------------------------------------------------
+    # BINARY
+    # --------------------------------------------------------
+
+    for a, b in itertools.combinations(
+        base,
+        2
+    ):
+
+        formulas.append(
+            Formula(
+                f"({a}+{b})",
+                lambda row, a=a, b=b:
+                    row.get(a, 0)
+                    +
+                    row.get(b, 0)
+            )
+        )
+
+        formulas.append(
+            Formula(
+                f"({a}-{b})",
+                lambda row, a=a, b=b:
+                    row.get(a, 0)
+                    -
+                    row.get(b, 0)
+            )
+        )
+
+        formulas.append(
+            Formula(
+                f"ABS({a}-{b})",
+                lambda row, a=a, b=b:
+                    abs(
+                        row.get(a, 0)
+                        -
+                        row.get(b, 0)
+                    )
+            )
+        )
+
+        formulas.append(
+            Formula(
+                f"({a}*{b})",
+                lambda row, a=a, b=b:
+                    row.get(a, 0)
+                    *
+                    row.get(b, 0)
+            )
+        )
+
+        formulas.append(
+            Formula(
+                f"MOD9({a}+{b})",
+                lambda row, a=a, b=b:
+                    mod9(
+                        row.get(a, 0)
+                        +
+                        row.get(b, 0)
+                    )
+            )
+        )
+
+        formulas.append(
+            Formula(
+                f"MOD10({a}+{b})",
+                lambda row, a=a, b=b:
+                    mod10(
+                        row.get(a, 0)
+                        +
+                        row.get(b, 0)
+                    )
+            )
+        )
+
+        formulas.append(
+            Formula(
+                f"MOD10({a}*{b})",
+                lambda row, a=a, b=b:
+                    mod10(
+                        row.get(a, 0)
+                        *
+                        row.get(b, 0)
+                    )
+            )
+        )
+
+        formulas.append(
+            Formula(
+                f"({a}/{b})",
+                lambda row, a=a, b=b:
+                    safe_div(
+                        row.get(a, 0),
+                        row.get(b, 0)
+                    )
+            )
+        )
+
+    # --------------------------------------------------------
+    # TRIPLE
+    # --------------------------------------------------------
+
+    important = [
+        x for x in base
+        if (
+            x.startswith("H_")
+            or x.startswith("T_")
+            or x.startswith("O_")
+            or x.startswith("T2_")
+            or x.startswith("O2_")
+        )
+    ]
+
+    # จำกัดจำนวนเพื่อให้เร็ว
+    important = important[:24]
+
+    for a, b, c in itertools.combinations(
+        important,
+        3
+    ):
+
+        formulas.append(
+            Formula(
+                f"(({a}+{b})+{c})",
+                lambda row, a=a, b=b, c=c:
+                    row.get(a, 0)
+                    +
+                    row.get(b, 0)
+                    +
+                    row.get(c, 0)
+            )
+        )
+
+        formulas.append(
+            Formula(
+                f"(({a}+{b})-{c})",
+                lambda row, a=a, b=b, c=c:
+                    row.get(a, 0)
+                    +
+                    row.get(b, 0)
+                    -
+                    row.get(c, 0)
+            )
+        )
+
+        formulas.append(
+            Formula(
+                f"(({a}-{b})+{c})",
+                lambda row, a=a, b=b, c=c:
+                    row.get(a, 0)
+                    -
+                    row.get(b, 0)
+                    +
+                    row.get(c, 0)
+            )
+        )
+
+        formulas.append(
+            Formula(
+                f"(({a}*{b})+{c})",
+                lambda row, a=a, b=b, c=c:
+                    row.get(a, 0)
+                    *
+                    row.get(b, 0)
+                    +
+                    row.get(c, 0)
+            )
+        )
+
+        formulas.append(
+            Formula(
+                f"MOD10(({a}+{b})*{c})",
+                lambda row, a=a, b=b, c=c:
+                    mod10(
+                        (
+                            row.get(a, 0)
+                            +
+                            row.get(b, 0)
+                        )
+                        *
+                        row.get(c, 0)
+                    )
+            )
+        )
+
+        formulas.append(
+            Formula(
+                f"MOD10({a}+{b}+{c})",
+                lambda row, a=a, b=b, c=c:
+                    mod10(
+                        row.get(a, 0)
+                        +
+                        row.get(b, 0)
+                        +
+                        row.get(c, 0)
+                    )
+            )
+        )
+
+    return formulas
+
+
+# ============================================================
+# TARGET HIT
+# ============================================================
+
+def evaluate_formula_history(
+    formula,
+    features,
+    data,
+    start
+):
+
+    predictions = []
+    actuals = []
+
+    for i in range(start, len(data)):
+
+        row = features.iloc[i].to_dict()
+
+        pred = formula.calculate(
+            row
+        )
+
+        actual = target_digit(
+            data,
+            i,
+            "H"
+        )
+
+        predictions.append(pred)
+        actuals.append(actual)
+
+    return predictions, actuals
+
+
+# ============================================================
+# SCORE
+# ============================================================
+
+def score_formula(
+    formula,
+    features,
+    data,
+    position,
+    start,
+    recent_window
+):
+
+    predictions = []
+    actuals = []
+
+    for i in range(
+        start,
+        len(data)
+    ):
+
+        row = features.iloc[i].to_dict()
+
+        pred = formula.calculate(
+            row
+        )
+
+        actual = target_digit(
+            data,
+            i,
+            position
+        )
+
+        predictions.append(pred)
+        actuals.append(actual)
+
+    if len(actuals) < 5:
+
+        return None
+
+    hits = [
+        int(
+            p is not None
+            and p == a
+        )
+        for p, a in zip(
+            predictions,
+            actuals
+        )
+    ]
+
+    total_hit = np.mean(hits)
+
+    recent_hits = hits[
+        -recent_window:
+    ]
+
+    recent_hit = (
+        np.mean(recent_hits)
+        if recent_hits
+        else 0
+    )
+
+    # --------------------------------------------------------
+    # STABILITY
+    # --------------------------------------------------------
+
+    if len(hits) >= 20:
+
+        chunks = np.array_split(
+            np.array(hits),
+            4
+        )
+
+        rates = [
+            np.mean(c)
+            for c in chunks
+            if len(c)
+        ]
+
+        stability = 1 - np.std(
+            rates
+        )
+
     else:
-        items = data["dead_results"]
-        nums = " - ".join(str(n) for n, p in items)
-        probs = " | ".join(f"{n}: {p*100:.1f}%" for n, p in items)
-        html = f"""
-        <div class="dead-card">
-            <div class="position-title">🛑 {POSITION_LABELS[pos]}</div>
-            <div class="dead-number">{nums}</div>
-            <div class="prob-text">🛑 DEAD SCORE TOP-3<br>{probs}</div>
-        </div>
-        """
-    st.markdown(html, unsafe_allow_html=True)
 
-def main():
-    inject_css()
-    st.markdown("<div class='main-title'>🤖 LOTTO AI PRO V8.9</div>", unsafe_allow_html=True)
-    st.markdown("<div class='subtitle'>⚡ CLEAN UI • AUTO-CORRECT • TOP 5 BOTTOM SUMMARY</div>", unsafe_allow_html=True)
+        stability = 0.5
 
-    c1, c2 = st.columns(2)
-    lottery = c1.selectbox("🏷️ เลือกประเภทหวย", list(LOTTERY_SOURCES.keys()))
-    selected_day = c2.selectbox("📅 วันเป้าหมาย", ["อัตโนมัติ"] + DOW_NAMES)
+    stability = float(
+        np.clip(
+            stability,
+            0,
+            1
+        )
+    )
 
-    if not st.button("🚀 เริ่มวิเคราะห์ V8.9", type="primary", use_container_width=True):
-        return
+    # --------------------------------------------------------
+    # OVERFIT
+    # --------------------------------------------------------
 
-    with st.spinner("📥 กำลังดึงข้อมูลจากเว็บ..."):
-        df, error_msg = fetch_lottery_data(LOTTERY_SOURCES[lottery])
-        if error_msg:
-            st.error(f"❌ มีปัญหาการดึงข้อมูล: {error_msg}")
-            return
-        if len(df) < 50:
-            st.error(f"❌ ข้อมูลมีเพียง {len(df)} งวด (ต้องการอย่างน้อย 50 งวด)")
-            return
+    if len(hits) > recent_window:
 
-    with st.spinner("🧠 กำลังประมวลผล AI & Backtest (Multi-thread)..."):
-        thai_6d = (lottery == "หวยไทย" and is_thai_6d(df))
-        positions = THAI_POSITIONS if thai_6d else NORMAL_POSITIONS
+        old_hits = hits[
+            :-recent_window
+        ]
 
-        last_date = pd.Timestamp(df["Date"].iloc[-1])
-        days_ahead = 7 if selected_day == "อัตโนมัติ" else (DOW_NAMES.index(selected_day) - last_date.dayofweek) % 7 or 7
-        target_date = last_date + timedelta(days=days_ahead)
+        old_rate = np.mean(
+            old_hits
+        )
 
-        dummy = {"Date": target_date, "Result_3D": "000", "Result_2D": "00"}
-        if thai_6d: dummy["Result_6D"] = "000000"
-        
-        ext = pd.concat([df, pd.DataFrame([dummy])], ignore_index=True)
-        feat = build_features(ext, thai_6d)
-        features = get_features(thai_6d)
-        cfg = get_adaptive_config(len(df))
+        gap = (
+            recent_hit
+            -
+            old_rate
+        )
 
-        final = {}
-        progress = st.progress(0)
-        bt_steps = min(15, max(5, len(df) - cfg["min_train"])) 
+    else:
 
-        def process_position(pos):
-            X = feat[features].iloc[:-1].tail(cfg["train_window"])
-            y = feat[pos].astype(np.int8).iloc[:-1].tail(cfg["train_window"])
-            X_test = feat[features].iloc[[-1]]
-            res_final = run_system_pair(X, y, X_test, cfg)
-            
-            res_bt = run_backtest_for_pos(feat, pos, features, cfg, steps=bt_steps)
-            
-            if res_bt is not None and len(res_bt) >= 2:
-                recent_2 = res_bt.tail(2)
-                if all(x == "❌ หลุด" for x in recent_2["ผลเด่น"]):
-                    fallback_prob = compute_fallback_prob(feat, pos)
-                    res_final["probability"] = fallback_prob
-                    order_hot = np.argsort(fallback_prob)[::-1]
-                    order_dead = np.argsort(fallback_prob)
-                    res_final["hot_results"] = [(int(n), float(fallback_prob[n])) for n in order_hot[:3]]
-                    dead_score = normalize_probability(1.0 - fallback_prob)
-                    res_final["dead_results"] = [(int(n), float(dead_score[n])) for n in order_dead[:3]]
-                    res_final["confidence"] = float(fallback_prob[order_hot[0]]) - float(fallback_prob[order_hot[1]])
-                    res_final["hot_coverage"] = float(fallback_prob[order_hot[:3]].sum())
+        gap = 0
 
-            res_final["backtest"] = res_bt
-            return pos, res_final
+    # --------------------------------------------------------
+    # SCORE
+    # --------------------------------------------------------
 
-        with concurrent.futures.ThreadPoolExecutor(max_workers=len(positions)) as executor:
-            futures = {executor.submit(process_position, pos): pos for pos in positions}
-            for i, future in enumerate(concurrent.futures.as_completed(futures)):
-                pos, data = future.result()
-                final[pos] = data
-                progress.progress(int(((i + 1) / len(positions)) * 100))
-        progress.empty()
+    score = (
 
-    # ========================================================
-    # SUMMARY
-    # ========================================================
-    st.success(f"✅ ข้อมูลล่าสุดที่ใช้ประมวลผล: งวดวันที่ {last_date.strftime('%d/%m/%Y')}")
-    st.markdown("### 📊 สรุปผล AI")
-    
-    summary = []
-    for pos in positions:
-        hot = final[pos]["hot_results"]
-        dead = final[pos]["dead_results"]
-        bt = final[pos]["backtest"]
-        bt_hot = (bt["ผลเด่น"] == "✅ เข้า").sum() / len(bt) if (bt is not None and not bt.empty) else 0
-        
-        summary.append({
-            "ตำแหน่ง": POSITION_LABELS[pos],
-            "🔥 HOT TOP3": " - ".join(str(n) for n, p in hot),
-            "🛑 DEAD TOP3": " - ".join(str(n) for n, p in dead),
-            "ความมั่นใจ AI": f"{final[pos]['hot_coverage']*100:.1f}%",
-            "Win Rate (BT)": f"{bt_hot*100:.0f}%"
+        total_hit * 0.40
+
+        +
+
+        recent_hit * 0.30
+
+        +
+
+        stability * 0.20
+
+        +
+
+        max(
+            0,
+            1 - abs(gap)
+        ) * 0.10
+
+    )
+
+    # Penalty
+    if gap > 0.50:
+
+        score *= 0.65
+
+    return {
+
+        "formula": formula.name,
+
+        "hit_rate": total_hit,
+
+        "recent": recent_hit,
+
+        "stability": stability,
+
+        "gap": gap,
+
+        "score": score
+
+    }
+
+
+# ============================================================
+# DISCOVERY
+# ============================================================
+
+def discover_position(
+    data,
+    features,
+    formulas,
+    position,
+    start,
+    recent_window,
+    top_n
+):
+
+    results = []
+
+    for formula in formulas:
+
+        result = score_formula(
+            formula,
+            features,
+            data,
+            position,
+            start,
+            recent_window
+        )
+
+        if result is not None:
+
+            results.append(
+                result
+            )
+
+    results.sort(
+        key=lambda x: x["score"],
+        reverse=True
+    )
+
+    return results[:top_n]
+
+
+# ============================================================
+# PREDICT NEXT
+# ============================================================
+
+def predict_from_results(
+    results,
+    features
+):
+
+    if not results:
+
+        return None
+
+    row = features.iloc[
+        -1
+    ].to_dict()
+
+    predictions = []
+
+    for r in results:
+
+        # สร้าง formula lookup
+        pass
+
+    return predictions
+
+
+# ============================================================
+# FORMULA LOOKUP
+# ============================================================
+
+def formula_map(formulas):
+
+    return {
+        f.name: f
+        for f in formulas
+    }
+
+
+# ============================================================
+# POSITION PREDICTION
+# ============================================================
+
+def position_predictions(
+    results,
+    formulas,
+    features
+):
+
+    fmap = formula_map(
+        formulas
+    )
+
+    row = features.iloc[
+        -1
+    ].to_dict()
+
+    output = []
+
+    for r in results:
+
+        f = fmap.get(
+            r["formula"]
+        )
+
+        if f is None:
+            continue
+
+        pred = f.calculate(
+            row
+        )
+
+        if pred is None:
+            continue
+
+        output.append({
+
+            "Prediction": int(pred),
+
+            "Formula": f.name,
+
+            "Score": r["score"],
+
+            "Hit %": r["hit_rate"] * 100,
+
+            "Recent %": r["recent"] * 100,
+
+            "Stability %":
+                r["stability"] * 100
+
         })
 
-    st.dataframe(pd.DataFrame(summary), use_container_width=True, hide_index=True)
+    return output
+
+
+# ============================================================
+# ENSEMBLE
+# ============================================================
+
+def build_digit_ensemble(
+    prediction_lists
+):
+
+    counter = {
+        0: {},
+        1: {},
+        2: {}
+    }
+
+    for pos, predictions in enumerate(
+        prediction_lists
+    ):
+
+        for item in predictions:
+
+            digit = item[
+                "Prediction"
+            ]
+
+            weight = (
+
+                item["Score"]
+                * 0.55
+
+                +
+
+                (
+                    item["Recent %"]
+                    / 100
+                )
+                * 0.30
+
+                +
+
+                (
+                    item["Stability %"]
+                    / 100
+                )
+                * 0.15
+
+            )
+
+            counter[pos][
+                digit
+            ] = (
+                counter[pos].get(
+                    digit,
+                    0
+                )
+                +
+                weight
+            )
+
+    result = []
+
+    for pos in range(3):
+
+        ranked = sorted(
+            counter[pos].items(),
+            key=lambda x: x[1],
+            reverse=True
+        )
+
+        result.append(
+            ranked
+        )
+
+    return result
+
+
+# ============================================================
+# GENERATE NUMBER COMBINATIONS
+# ============================================================
+
+def generate_number_candidates(
+    ensemble,
+    top_digits=3
+):
+
+    digit_sets = []
+
+    for ranked in ensemble:
+
+        digits = [
+            int(x[0])
+            for x in ranked[
+                :top_digits
+            ]
+        ]
+
+        digit_sets.append(
+            digits
+        )
+
+    numbers = []
+
+    for a, b, c in itertools.product(
+        *digit_sets
+    ):
+
+        number = (
+            f"{a}{b}{c}"
+        )
+
+        weight = 0
+
+        for pos, digit in enumerate(
+            [a, b, c]
+        ):
+
+            for d, w in ensemble[pos]:
+
+                if d == digit:
+
+                    weight += w
+                    break
+
+        numbers.append({
+
+            "Number": number,
+
+            "Weight": weight
+
+        })
+
+    numbers.sort(
+        key=lambda x: x["Weight"],
+        reverse=True
+    )
+
+    return pd.DataFrame(
+        numbers
+    )
+
+
+# ============================================================
+# MAIN
+# ============================================================
+
+if data is not None and len(data) >= min_history:
+
     st.markdown("---")
 
-    t1, t2, t3, t4 = st.tabs(["🔥 เจาะลึกเลขเด่น", "🛑 เจาะลึกเลขดับ", "📜 ประวัติจริง (เช็คหลัก)", "📈 Backtest"])
+    st.header(
+        "🧠 2. AUTO SYMBOLIC DISCOVERY"
+    )
 
-    with t1:
-        for i in range(0, len(positions), 2):
-            cols = st.columns(2)
-            with cols[0]: display_card(positions[i], final[positions[i]], True)
-            if i + 1 < len(positions):
-                with cols[1]: display_card(positions[i + 1], final[positions[i + 1]], True)
+    st.write(
+        f"จำนวนข้อมูล: **{len(data):,} งวด**"
+    )
 
-    with t2:
-        for i in range(0, len(positions), 2):
-            cols = st.columns(2)
-            with cols[0]: display_card(positions[i], final[positions[i]], False)
-            if i + 1 < len(positions):
-                with cols[1]: display_card(positions[i + 1], final[positions[i + 1]], False)
+    if st.button(
+        "🚀 เริ่มค้นหาสมการอัตโนมัติ",
+        type="primary",
+        use_container_width=True
+    ):
 
-    with t3:
-        st.markdown("### 📜 ผลจริง 10 งวดล่าสุด")
-        history_cols = ["Date"] + positions
-        history = feat.iloc[:-1].tail(10)[history_cols].copy().sort_values("Date", ascending=False)
-        history["Date"] = history["Date"].dt.strftime("%d/%m/%Y")
-        rename = {pos: POSITION_LABELS[pos] for pos in positions}
-        rename["Date"] = "วันที่"
-        history = history.rename(columns=rename)
-        for col in history.columns:
-            if col != "วันที่": history[col] = history[col].astype(int).astype(str)
-        st.dataframe(history, use_container_width=True, hide_index=True)
+        with st.spinner(
+            "AI กำลังค้นหาสมการ..."
+        ):
 
-    with t4:
-        for pos in positions:
-            bt_df = final[pos]["backtest"]
-            if bt_df is None or bt_df.empty: continue
-            hot_rate = (bt_df["ผลเด่น"] == "✅ เข้า").sum() / len(bt_df)
-            with st.expander(f"📊 {POSITION_LABELS[pos]} | Win Rate {hot_rate*100:.0f}%", expanded=False):
-                st.dataframe(bt_df.sort_values("วันที่", ascending=False), use_container_width=True, hide_index=True)
+            # --------------------------------------------
+            # BUILD FEATURES
+            # --------------------------------------------
 
-    # ========================================================
-    # 🌟 TOP 5 BOTTOM SUMMARY (เลขเด่นบน - ล่าง 5 ตัวด้านล่างสุด)
-    # ========================================================
+            features = build_features(
+                data
+            )
+
+            # --------------------------------------------
+            # GENERATE
+            # --------------------------------------------
+
+            formulas = generate_formulas()
+
+            # จำกัดจำนวน
+            if len(formulas) > max_formulas:
+
+                rng = np.random.default_rng(
+                    42
+                )
+
+                idx = rng.choice(
+                    len(formulas),
+                    size=max_formulas,
+                    replace=False
+                )
+
+                formulas = [
+                    formulas[i]
+                    for i in idx
+                ]
+
+            st.session_state[
+                "features"
+            ] = features
+
+            st.session_state[
+                "formulas"
+            ] = formulas
+
+            # --------------------------------------------
+            # SEARCH
+            # --------------------------------------------
+
+            positions = [
+                "H",
+                "T",
+                "O"
+            ]
+
+            all_results = {}
+
+            progress = st.progress(
+                0
+            )
+
+            for p_idx, position in enumerate(
+                positions
+            ):
+
+                result = discover_position(
+                    data,
+                    features,
+                    formulas,
+                    position,
+                    min_history,
+                    recent_window,
+                    top_n
+                )
+
+                all_results[
+                    position
+                ] = result
+
+                progress.progress(
+                    (p_idx + 1)
+                    / 3
+                )
+
+            st.session_state[
+                "results"
+            ] = all_results
+
+            st.success(
+                "ค้นหาสมการเสร็จแล้ว"
+            )
+
+
+# ============================================================
+# RESULTS
+# ============================================================
+
+if "results" in st.session_state:
+
+    results = st.session_state[
+        "results"
+    ]
+
+    features = st.session_state[
+        "features"
+    ]
+
+    formulas = st.session_state[
+        "formulas"
+    ]
+
     st.markdown("---")
-    
-    # แยกคำนวณ Top 5 บน (หลักร้อย, สิบ, หน่วย) และ ล่าง (สิบล่าง, หน่วยล่าง)
-    upper_pos = [p for p in positions if p in ["H4", "H5", "H6", "H", "T", "O"]]
-    lower_pos = [p for p in positions if p in ["T2", "O2"]]
 
-    def get_top5(pos_list):
-        if not pos_list: return []
-        combined_prob = np.zeros(10, dtype=np.float32)
-        for p in pos_list:
-            combined_prob += final[p]["probability"]
-        top5_idx = np.argsort(combined_prob)[::-1][:5]
-        return [int(n) for n in top5_idx]
+    st.header(
+        "🏆 3. TOP DISCOVERED EQUATIONS"
+    )
 
-    top5_upper = get_top5(upper_pos)
-    top5_lower = get_top5(lower_pos)
+    tabs = st.tabs([
+        "🔴 หลักร้อย H",
+        "🟢 หลักสิบ T",
+        "🔵 หลักหน่วย O"
+    ])
 
-    st.markdown(f"""
-    <div class="top5-box">
-        <div class="top5-title">🔥 เลขเด่นชุดบน (Top 5)</div>
-        <div class="top5-nums">{" &nbsp; - &nbsp; ".join(map(str, top5_upper))}</div>
-    </div>
-    """, unsafe_allow_html=True)
+    prediction_lists = []
 
-    if top5_lower:
-        st.markdown(f"""
-        <div class="top5-box" style="background:linear-gradient(135deg,#eff6ff,#dbeafe); border-color:#3b82f6;">
-            <div class="top5-title" style="color:#1d4ed8;">🔥 เลขเด่นชุดล่าง (Top 5)</div>
-            <div class="top5-nums" style="color:#1e40af;">{" &nbsp; - &nbsp; ".join(map(str, top5_lower))}</div>
-        </div>
-        """, unsafe_allow_html=True)
+    for tab, position in zip(
+        tabs,
+        ["H", "T", "O"]
+    ):
 
-if __name__ == "__main__":
-    main()
+        with tab:
+
+            result = results[
+                position
+            ]
+
+            table = pd.DataFrame([
+
+                {
+                    "อันดับ": i + 1,
+
+                    "สูตร":
+                        r["formula"],
+
+                    "Hit %":
+                        round(
+                            r["hit_rate"] * 100,
+                            2
+                        ),
+
+                    "Recent %":
+                        round(
+                            r["recent"] * 100,
+                            2
+                        ),
+
+                    "Stability %":
+                        round(
+                            r["stability"] * 100,
+                            2
+                        ),
+
+                    "Overfit Gap %":
+                        round(
+                            r["gap"] * 100,
+                            2
+                        ),
+
+                    "SCORE":
+                        round(
+                            r["score"] * 100,
+                            3
+                        )
+                }
+
+                for i, r in enumerate(
+                    result
+                )
+
+            ])
+
+            st.dataframe(
+                table,
+                use_container_width=True,
+                hide_index=True
+            )
+
+            # ----------------------------------------
+            # PREDICTION
+            # ----------------------------------------
+
+            preds = position_predictions(
+                result,
+                formulas,
+                features
+            )
+
+            prediction_lists.append(
+                preds
+            )
+
+            st.subheader(
+                f"🔮 สูตรที่ใช้คำนวณงวดถัดไป — {position}"
+            )
+
+            pred_table = pd.DataFrame(
+                preds
+            )
+
+            if not pred_table.empty:
+
+                pred_table[
+                    "Score"
+                ] = pred_table[
+                    "Score"
+                ].round(4)
+
+                st.dataframe(
+                    pred_table,
+                    use_container_width=True,
+                    hide_index=True
+                )
+
+
+# ============================================================
+# ENSEMBLE
+# ============================================================
+
+if "results" in st.session_state:
+
+    st.markdown("---")
+
+    st.header(
+        "🎯 4. SYMBOLIC EQUATION ENSEMBLE"
+    )
+
+    results = st.session_state[
+        "results"
+    ]
+
+    features = st.session_state[
+        "features"
+    ]
+
+    formulas = st.session_state[
+        "formulas"
+    ]
+
+    prediction_lists = []
+
+    for position in [
+        "H",
+        "T",
+        "O"
+    ]:
+
+        prediction_lists.append(
+            position_predictions(
+                results[position],
+                formulas,
+                features
+            )
+        )
+
+    ensemble = build_digit_ensemble(
+        prediction_lists
+    )
+
+    c1, c2, c3 = st.columns(3)
+
+    for col, title, ranked in zip(
+        [c1, c2, c3],
+        ["🔴 H", "🟢 T", "🔵 O"],
+        ensemble
+    ):
+
+        with col:
+
+            st.subheader(
+                title
+            )
+
+            if ranked:
+
+                dtable = pd.DataFrame(
+                    ranked[:10],
+                    columns=[
+                        "Digit",
+                        "Weight"
+                    ]
+                )
+
+                dtable[
+                    "Weight"
+                ] = dtable[
+                    "Weight"
+                ].round(4)
+
+                st.dataframe(
+                    dtable,
+                    use_container_width=True,
+                    hide_index=True
+                )
+
+
+# ============================================================
+# NUMBER CANDIDATES
+# ============================================================
+
+if "results" in st.session_state:
+
+    st.markdown("---")
+
+    st.header(
+        "🔢 5. TOP 3-DIGIT CANDIDATES"
+    )
+
+    results = st.session_state[
+        "results"
+    ]
+
+    features = st.session_state[
+        "features"
+    ]
+
+    formulas = st.session_state[
+        "formulas"
+    ]
+
+    prediction_lists = []
+
+    for position in [
+        "H",
+        "T",
+        "O"
+    ]:
+
+        prediction_lists.append(
+            position_predictions(
+                results[position],
+                formulas,
+                features
+            )
+        )
+
+    ensemble = build_digit_ensemble(
+        prediction_lists
+    )
+
+    candidates = generate_number_candidates(
+        ensemble,
+        top_digits=4
+    )
+
+    if not candidates.empty:
+
+        candidates[
+            "Weight"
+        ] = candidates[
+            "Weight"
+        ].round(5)
+
+        st.dataframe(
+            candidates.head(20),
+            use_container_width=True,
+            hide_index=True
+        )
+
+        st.subheader(
+            "🔥 Top 10"
+        )
+
+        top10 = candidates.head(
+            10
+        )["Number"].tolist()
+
+        st.success(
+            "   ".join(
+                top10
+            )
+        )
+
+
+# ============================================================
+# RECENT 10 TEST
+# ============================================================
+
+if "results" in st.session_state:
+
+    st.markdown("---")
+
+    st.header(
+        "🧪 6. ตรวจสอบสูตรกับ 10 งวดล่าสุด"
+    )
+
+    data = data.reset_index(
+        drop=True
+    )
+
+    features = st.session_state[
+        "features"
+    ]
+
+    formulas = st.session_state[
+        "formulas"
+    ]
+
+    results = st.session_state[
+        "results"
+    ]
+
+    fmap = formula_map(
+        formulas
+    )
+
+    recent_n = min(
+        10,
+        len(data)
+    )
+
+    recent_rows = []
+
+    for i in range(
+        len(data) - recent_n,
+        len(data)
+    ):
+
+        row = features.iloc[
+            i
+        ].to_dict()
+
+        actual = data.iloc[
+            i
+        ]["3D"]
+
+        pred_digits = []
+
+        for position in [
+            "H",
+            "T",
+            "O"
+        ]:
+
+            best = results[
+                position
+            ][0]
+
+            formula = fmap.get(
+                best["formula"]
+            )
+
+            if formula:
+
+                pred = formula.calculate(
+                    row
+                )
+
+            else:
+
+                pred = None
+
+            pred_digits.append(
+                "?"
+                if pred is None
+                else str(pred)
+            )
+
+        prediction = "".join(
+            pred_digits
+        )
+
+        recent_rows.append({
+
+            "งวด": i + 1,
+
+            "AI Formula":
+                prediction,
+
+            "Actual":
+                actual,
+
+            "ตรง":
+                prediction == actual
+
+        })
+
+    recent_df = pd.DataFrame(
+        recent_rows
+    )
+
+    st.dataframe(
+        recent_df,
+        use_container_width=True,
+        hide_index=True
+    )
+
+    recent_accuracy = (
+        recent_df["ตรง"].mean()
+        * 100
+    )
+
+    st.metric(
+        "Exact Match 10 งวดล่าสุด",
+        f"{recent_accuracy:.1f}%"
+    )
+
+
+# ============================================================
+# EXPLANATION
+# ============================================================
+
+st.markdown("---")
+
+with st.expander(
+    "ℹ️ วิธีอ่านผล"
+):
+
+    st.markdown("""
+### ตัวอย่าง
+
+ถ้า AI ค้นพบ
+
+`MOD10(H_L1 + O2_L1)`
+
+หมายถึง
+
+**เอาหลักร้อยของงวดก่อน + หลักหน่วยของเลข 2 ตัวงวดก่อน แล้ว Mod 10**
+
+ถ้าได้
+
+`6 + 5 = 11`
+
+ดังนั้น
+
+`11 Mod 10 = 1`
+
+AI จะเสนอ **1** สำหรับตำแหน่งนั้น
+
+---
+
+### Score
+
+คะแนนรวมมาจาก
+
+- Historical Hit Rate
+- Recent Window
+- Stability
+- Overfit Control
+
+ดังนั้นสูตรที่ได้ Hit สูงอย่างเดียวไม่ได้หมายความว่าจะเป็นสูตรอันดับ 1 เสมอไป
+
+---
+
+### จุดสำคัญ
+
+ระบบนี้ไม่ได้บอกว่า "พบสูตรลับของหวย"
+
+แต่เป็นการค้นหา **รูปแบบทางคณิตศาสตร์ที่เคยสัมพันธ์กับข้อมูลย้อนหลัง** แล้วตรวจสอบว่าความสัมพันธ์นั้นยังเสถียรหรือไม่
+""")
+
+
+# ============================================================
+# FOOTER
+# ============================================================
+
+st.caption(
+    "LOTTO AI AUTO SYMBOLIC EQUATION V2 • "
+    "Research / Experimental Pattern Discovery"
+)
