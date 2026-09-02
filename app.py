@@ -1,424 +1,362 @@
 # ============================================================
-# 🧠 LOTTO AI
-# AUTO SYMBOLIC EQUATION V2
-# POSITION SEARCH ENGINE
+# LOTTO AI - AUTO SYMBOLIC EQUATION V3
+# BLOGSPOT AUTO SCRAPER + POSITION EQUATION DISCOVERY
 # ============================================================
+# Install:
+#   pip install streamlit pandas numpy requests beautifulsoup4
 #
-# ค้นหาสูตรอัตโนมัติแบบ "แยกทีละหลัก"
+# Run:
+#   streamlit run lotto_symbolic_blogspot_v3.py
 #
-# หลักร้อย  -> สูตรที่ดีที่สุด
-# หลักสิบ   -> สูตรที่ดีที่สุด
-# หลักหน่วย -> สูตรที่ดีที่สุด
-#
-# INPUT
-#   3D = เลข 3 ตัว
-#   2D = เลข 2 ตัว
-#
-# FEATURES
-#   L1 / L2 / L3 / L5
-#   H / T / O
-#   T2 / O2
-#   SUM3 / SUM2
-#   ABS
-#   + - * /
-#   MOD 10
-#   MOD 9
-#   DIGIT SUM
-#   CROSS POSITION
-#
-# VALIDATION
-#   Walk Forward
-#   Recent 10
-#   Stability
-#   Overfit Penalty
-#
+# IMPORTANT:
+# This is a pattern-discovery / backtest tool, not a guarantee of
+# future lottery results.
 # ============================================================
 
-import streamlit as st
-import pandas as pd
-import numpy as np
-import itertools
 import re
-import math
 import warnings
+import itertools
+from urllib.parse import urljoin, urlparse
+
+import numpy as np
+import pandas as pd
+import requests
+import streamlit as st
+from bs4 import BeautifulSoup
 
 warnings.filterwarnings("ignore")
 
-
-# ============================================================
-# PAGE
-# ============================================================
-
 st.set_page_config(
-    page_title="Lotto AI Symbolic Equation V2",
+    page_title="Lotto AI Symbolic Blogspot V3",
     page_icon="🧠",
-    layout="wide"
+    layout="wide",
 )
+
+BLOG_URLS = {
+    "หวยไทย": "https://suksan18190.blogspot.com/2026/07/blog-post_07.html",
+    "หวยลาว": "https://suksan18190.blogspot.com/2026/07/blog-post.html",
+    "หวยฮานอย": "https://suksan18190.blogspot.com/2026/07/blog-post_08.html",
+    "หวยธกส": "https://suksan18190.blogspot.com/2026/07/blog-post_12.html",
+    "หวยออมสิน": "https://suksan18190.blogspot.com/2026/07/blog-post_525.html",
+    "หวยมาเลย์": "https://suksan18190.blogspot.com/2026/07/blog-post_10.html",
+    "หวยหุ้นไทยเย็น": "https://suksan18190.blogspot.com/2026/07/blog-post_11.html",
+    "หวยหุ้นนิเคอิบ่าย": "https://suksan18190.blogspot.com/2026/07/blog-post_412.html",
+    "หวยหุ้นฮั่งเส็งบ่าย": "https://suksan18190.blogspot.com/2026/07/blog-post_229.html",
+    "หวยหุ้นจีนบ่าย": "https://suksan18190.blogspot.com/2026/07/blog-post_162.html",
+}
+
+HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Linux; Android 10) "
+        "AppleWebKit/537.36 Chrome/125 Safari/537.36"
+    )
+}
 
 
 # ============================================================
-# TITLE
+# HTTP / BLOGSPOT
 # ============================================================
 
-st.title("🧠 LOTTO AI — AUTO SYMBOLIC EQUATION V2")
-
-st.markdown("""
-### Position Search Engine
-
-ระบบจะค้นหาสมการแบบอัตโนมัติจากข้อมูลย้อนหลัง
-
-**เลข 3 หลัก**
-- H = หลักร้อย
-- T = หลักสิบ
-- O = หลักหน่วย
-
-**เลข 2 หลัก**
-- T2 = หลักสิบ
-- O2 = หลักหน่วย
-
-แล้วค้นหาสูตรแยกเป็น
-
-`หลักร้อย → สูตรของหลักร้อย`
-
-`หลักสิบ → สูตรของหลักสิบ`
-
-`หลักหน่วย → สูตรของหลักหน่วย`
-""")
+@st.cache_data(ttl=1800, show_spinner=False)
+def fetch_html(url):
+    r = requests.get(url, headers=HEADERS, timeout=20)
+    r.raise_for_status()
+    return r.text
 
 
-# ============================================================
-# SIDEBAR
-# ============================================================
+def clean_text(html):
+    soup = BeautifulSoup(html, "html.parser")
+    for tag in soup(["script", "style", "noscript"]):
+        tag.decompose()
 
-st.sidebar.header("⚙️ SETTINGS")
-
-min_history = st.sidebar.slider(
-    "จำนวนงวดขั้นต่ำก่อนเริ่มค้นหา",
-    20,
-    200,
-    40
-)
-
-top_n = st.sidebar.slider(
-    "จำนวนสูตรที่เก็บต่อหลัก",
-    3,
-    30,
-    10
-)
-
-recent_window = st.sidebar.slider(
-    "Recent Window",
-    5,
-    30,
-    10
-)
-
-max_formulas = st.sidebar.slider(
-    "จำนวนสูตรสูงสุดที่จะทดสอบ",
-    500,
-    20000,
-    5000,
-    step=500
-)
-
-st.sidebar.markdown("---")
-
-st.sidebar.info(
-    "ระบบนี้ใช้การค้นหาสมการจากข้อมูลย้อนหลัง "
-    "และ Walk-forward validation "
-    "เพื่อช่วยลดการจำข้อมูลย้อนหลังมากเกินไป"
-)
-
-
-# ============================================================
-# HELPERS
-# ============================================================
-
-def clean_number(x, width):
-
-    if pd.isna(x):
-        return None
-
-    s = str(x).strip()
-
-    s = re.sub(r"\.0$", "", s)
-
-    digits = re.sub(r"\D", "", s)
-
-    if digits == "":
-        return None
-
-    return digits.zfill(width)[-width:]
-
-
-def digit_sum(x):
-
-    s = str(int(x)).zfill(3)
-
-    return sum(int(c) for c in s)
-
-
-def reverse_number(x, width):
-
-    return int(
-        str(int(x)).zfill(width)[::-1]
+    root = (
+        soup.select_one(".post-body")
+        or soup.select_one(".entry-content")
+        or soup.select_one("article")
+        or soup.body
     )
 
+    if root is None:
+        return "", soup
 
-def safe_div(a, b):
-
-    if abs(b) < 1e-12:
-        return None
-
-    return a / b
+    return root.get_text("\n", strip=True), soup
 
 
-def mod10(x):
-
-    if x is None:
-        return None
-
-    return int(round(x)) % 10
-
-
-def mod9(x):
-
-    if x is None:
-        return None
-
-    return int(round(x)) % 9
-
-
-# ============================================================
-# LOAD DATA
-# ============================================================
-
-st.header("📥 1. โหลดข้อมูล")
-
-uploaded = st.file_uploader(
-    "อัปโหลด CSV",
-    type=["csv"]
-)
-
-df = None
-
-
-if uploaded is not None:
-
+def normalize_url(base, href):
     try:
+        u = urljoin(base, href)
+        p = urlparse(u)
+        if p.scheme not in ("http", "https"):
+            return None
+        return u.split("#")[0]
+    except Exception:
+        return None
 
-        df = pd.read_csv(
-            uploaded,
-            dtype=str
-        )
 
-        st.success(
-            f"โหลดข้อมูลสำเร็จ {len(df):,} งวด"
-        )
+def same_blog(url_a, url_b):
+    return urlparse(url_a).netloc.lower() == urlparse(url_b).netloc.lower()
 
-        st.write(
-            "Columns:",
-            list(df.columns)
-        )
 
-    except Exception as e:
-
-        st.error(
-            f"อ่านไฟล์ไม่ได้: {e}"
-        )
+def blog_links(url, soup):
+    out = []
+    for a in soup.find_all("a", href=True):
+        u = normalize_url(url, a["href"])
+        if u and same_blog(url, u):
+            out.append(u)
+    return list(dict.fromkeys(out))
 
 
 # ============================================================
-# MANUAL DATA
+# NUMBER EXTRACTION
 # ============================================================
 
-st.subheader("หรือกรอกข้อมูลเอง")
-
-manual_text = st.text_area(
-    "รูปแบบ: 3D,2D ต่อหนึ่งงวด",
-    value="",
-    height=120,
-    placeholder="""615,53
-222,04
-381,21
-742,72"""
-)
+def norm3(x):
+    s = re.sub(r"\D", "", str(x))
+    return s.zfill(3)[-3:] if s else None
 
 
-if manual_text.strip():
+def norm2(x):
+    s = re.sub(r"\D", "", str(x))
+    return s.zfill(2)[-2:] if s else None
+
+
+def extract_labeled_numbers(text):
+    """
+    Try common Thai labels first.
+    Returns candidate 3D/2D values.
+    """
+    t = text.replace("\u200b", " ")
+
+    p3 = [
+        r"(?:เลขสามตัว|3\s*ตัว|สามตัว|3d|3\s*digit)"
+        r"\s*[:=\-]?\s*([0-9]{3})",
+        r"(?:สามตัวบน|3\s*ตัวบน)"
+        r"\s*[:=\-]?\s*([0-9]{3})",
+        r"(?:สามตัวโต๊ด|3\s*ตัวโต๊ด)"
+        r"\s*[:=\-]?\s*([0-9]{3})",
+    ]
+
+    p2 = [
+        r"(?:เลขสองตัว|2\s*ตัว|สองตัว|2d|2\s*digit)"
+        r"\s*[:=\-]?\s*([0-9]{2})",
+        r"(?:สองตัวล่าง|2\s*ตัวล่าง)"
+        r"\s*[:=\-]?\s*([0-9]{2})",
+        r"(?:สองตัวบน|2\s*ตัวบน)"
+        r"\s*[:=\-]?\s*([0-9]{2})",
+    ]
+
+    three = []
+    two = []
+
+    for p in p3:
+        three += re.findall(p, t, flags=re.I)
+
+    for p in p2:
+        two += re.findall(p, t, flags=re.I)
+
+    three = [norm3(x) for x in three if norm3(x)]
+    two = [norm2(x) for x in two if norm2(x)]
+
+    return list(dict.fromkeys(three)), list(dict.fromkeys(two))
+
+
+def extract_generic_pairs(text):
+    """
+    Fallback parser for pages without obvious labels.
+
+    It searches each line for 3-digit and 2-digit numbers that occur
+    near each other. It deliberately ignores most date-like tokens.
+    """
+    rows = []
+
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+
+        nums = re.findall(r"(?<!\d)\d{1,3}(?!\d)", line)
+
+        if not nums:
+            continue
+
+        # Prefer explicit 3-digit + 2-digit on same line.
+        threes = [x for x in nums if len(x) == 3]
+        twos = [x for x in nums if len(x) <= 2]
+
+        if threes and twos:
+            for a in threes[:3]:
+                # Prefer the last short number on the same line.
+                b = twos[-1]
+                rows.append((norm3(a), norm2(b)))
+
+    return rows
+
+
+def parse_page(url):
+    html = fetch_html(url)
+    text, soup = clean_text(html)
+
+    threes, twos = extract_labeled_numbers(text)
 
     rows = []
 
-    for line in manual_text.strip().splitlines():
+    # If labels found, pair by order.
+    if threes and twos:
+        n = min(len(threes), len(twos))
+        for i in range(n):
+            rows.append((threes[i], twos[i]))
 
-        parts = re.split(
-            r"[,;\\s]+",
-            line.strip()
-        )
+    # Generic fallback.
+    if not rows:
+        rows = extract_generic_pairs(text)
 
-        if len(parts) >= 2:
+    # Deduplicate.
+    rows = list(dict.fromkeys(
+        (a, b) for a, b in rows
+        if a and b
+    ))
 
-            rows.append({
-                "3D": parts[0],
-                "2D": parts[1]
-            })
-
-    if rows:
-
-        df = pd.DataFrame(rows)
-
-        st.success(
-            f"รับข้อมูล {len(df):,} งวด"
-        )
+    return rows, text, soup
 
 
 # ============================================================
-# AUTO DETECT COLUMNS
+# HISTORICAL PAGE CRAWLER
 # ============================================================
 
-def find_column(columns, candidates):
+def score_link_for_category(url, category):
+    """
+    Keep same-blog links. The score helps prioritize links likely
+    to belong to the same category / result pages.
+    """
+    s = url.lower()
+    score = 0
 
-    lower_map = {
-        str(c).lower(): c
-        for c in columns
+    keys = {
+        "หวยไทย": ["ไทย", "รัฐบาล", "lotto"],
+        "หวยลาว": ["ลาว", "lao"],
+        "หวยฮานอย": ["ฮานอย", "hanoi"],
+        "หวยธกส": ["ธกส", "ธ.ก.ส"],
+        "หวยออมสิน": ["ออมสิน"],
+        "หวยมาเลย์": ["มาเลย์", "malay"],
+        "หวยหุ้นไทยเย็น": ["หุ้นไทย", "ไทยเย็น"],
+        "หวยหุ้นนิเคอิบ่าย": ["นิเคอิ", "nikkei"],
+        "หวยหุ้นฮั่งเส็งบ่าย": ["ฮั่งเส็ง", "hangseng"],
+        "หวยหุ้นจีนบ่าย": ["หุ้นจีน", "จีนบ่าย"],
     }
 
-    for candidate in candidates:
+    for k in keys.get(category, []):
+        if k.lower() in s:
+            score += 3
 
-        if candidate.lower() in lower_map:
-
-            return lower_map[
-                candidate.lower()
-            ]
-
-    # fuzzy
-
-    for c in columns:
-
-        cl = str(c).lower()
-
-        for candidate in candidates:
-
-            if candidate.lower() in cl:
-
-                return c
-
-    return None
+    return score
 
 
-if df is not None:
+def crawl_blogspot(start_url, category, max_pages=80):
+    """
+    Crawl same-domain pages from the supplied seed URL.
+    It prioritizes links that look like the selected category.
 
-    col3 = find_column(
-        df.columns,
-        [
-            "3d",
-            "3D",
-            "result3",
-            "three",
-            "three_digit",
-            "เลข3ตัว",
-            "สามตัว"
-        ]
-    )
+    Important:
+    The seed page is always included.
+    """
+    visited = set()
+    queue = [(start_url, 100)]
+    collected = []
 
-    col2 = find_column(
-        df.columns,
-        [
-            "2d",
-            "2D",
-            "result2",
-            "two",
-            "two_digit",
-            "เลข2ตัว",
-            "สองตัว"
-        ]
-    )
+    while queue and len(visited) < max_pages:
+        queue.sort(key=lambda x: x[1], reverse=True)
+        url, _ = queue.pop(0)
 
-    if col3 is None or col2 is None:
+        if url in visited:
+            continue
 
-        st.warning(
-            "ไม่สามารถหา column 3D / 2D ได้อัตโนมัติ"
-        )
+        visited.add(url)
 
-        c1, c2 = st.columns(2)
+        try:
+            rows, text, soup = parse_page(url)
+        except Exception:
+            continue
 
-        with c1:
+        if rows:
+            for a, b in rows:
+                collected.append({
+                    "source_url": url,
+                    "3D": a,
+                    "2D": b,
+                })
 
-            col3 = st.selectbox(
-                "เลือก Column เลข 3 ตัว",
-                df.columns
+        for link in blog_links(url, soup):
+            if link in visited:
+                continue
+
+            # Avoid obvious non-post resources.
+            low = link.lower()
+            if any(x in low for x in [
+                "/p/", "/search", "/feeds/", ".xml",
+                "javascript:", "mailto:"
+            ]):
+                continue
+
+            score = score_link_for_category(
+                link, category
             )
 
-        with c2:
+            # Blogspot post URLs get a small priority boost.
+            if ".html" in low:
+                score += 2
 
-            col2 = st.selectbox(
-                "เลือก Column เลข 2 ตัว",
-                df.columns
-            )
+            # Do not completely exclude ordinary same-domain
+            # links because Blogspot templates vary.
+            queue.append((link, score))
 
-    data = pd.DataFrame()
-
-    data["3D"] = df[col3].apply(
-        lambda x: clean_number(x, 3)
-    )
-
-    data["2D"] = df[col2].apply(
-        lambda x: clean_number(x, 2)
-    )
-
-    data = data.dropna().reset_index(
-        drop=True
-    )
-
-else:
-
-    data = None
+    return pd.DataFrame(collected)
 
 
 # ============================================================
-# SHOW DATA
+# CLEAN / SORT HISTORY
 # ============================================================
 
-if data is not None:
+def clean_history(df):
+    if df.empty:
+        return df
 
-    st.subheader("ข้อมูลที่ใช้")
+    out = df.copy()
 
-    st.dataframe(
-        data.tail(20),
-        use_container_width=True
-    )
+    out["3D"] = out["3D"].apply(norm3)
+    out["2D"] = out["2D"].apply(norm2)
+
+    out = out.dropna(subset=["3D", "2D"])
+    out = out.drop_duplicates(
+        subset=["source_url", "3D", "2D"]
+    ).reset_index(drop=True)
+
+    # Keep crawler order. The pages are usually chronological around
+    # the seed, but source dates vary by blog template.
+    out["row_id"] = np.arange(len(out))
+
+    return out
 
 
 # ============================================================
-# CREATE RAW VARIABLES
+# SYMBOLIC FEATURES
 # ============================================================
 
-def make_raw_variables(row):
+def make_raw(row):
+    a = str(row["3D"]).zfill(3)
+    b = str(row["2D"]).zfill(2)
 
-    n3 = str(row["3D"]).zfill(3)
-    n2 = str(row["2D"]).zfill(2)
-
-    H = int(n3[0])
-    T = int(n3[1])
-    O = int(n3[2])
-
-    T2 = int(n2[0])
-    O2 = int(n2[1])
-
-    S3 = H + T + O
-    S2 = T2 + O2
+    H, T, O = map(int, a)
+    T2, O2 = map(int, b)
 
     return {
-
         "H": H,
         "T": T,
         "O": O,
-
         "T2": T2,
         "O2": O2,
 
-        "S3": S3,
-        "S2": S2,
+        "S3": H + T + O,
+        "S2": T2 + O2,
 
         "HT": abs(H - T),
         "TO": abs(T - O),
@@ -426,417 +364,184 @@ def make_raw_variables(row):
 
         "HT2": abs(H - T2),
         "HO2": abs(H - O2),
-
         "TT2": abs(T - T2),
         "TO2": abs(T - O2),
 
-        "R3": reverse_number(
-            n3,
-            3
-        ),
+        "R3": int(a[::-1]),
+        "R2": int(b[::-1]),
 
-        "R2": reverse_number(
-            n2,
-            2
-        ),
-
-        "DS3": digit_sum(n3),
-
-        "D2": T2 + O2
+        "DS3": H + T + O,
     }
 
 
-# ============================================================
-# BUILD LAG FEATURES
-# ============================================================
-
 def build_features(data):
-
-    records = []
+    rows = []
 
     for i in range(len(data)):
+        r = {}
 
-        record = {}
-
+        # Only previous draws: no look-ahead.
         for lag in [1, 2, 3, 5]:
+            j = i - lag
+            if j >= 0:
+                vals = make_raw(data.iloc[j])
+                for k, v in vals.items():
+                    r[f"{k}_L{lag}"] = v
 
-            idx = i - lag
+        rows.append(r)
 
-            if idx >= 0:
-
-                values = make_raw_variables(
-                    data.iloc[idx]
-                )
-
-                for key, value in values.items():
-
-                    record[
-                        f"{key}_L{lag}"
-                    ] = value
-
-        records.append(record)
-
-    return pd.DataFrame(
-        records
-    ).fillna(0)
+    return pd.DataFrame(rows).fillna(0)
 
 
 # ============================================================
-# TARGET DIGITS
-# ============================================================
-
-def target_digit(data, i, position):
-
-    s = str(
-        data.iloc[i]["3D"]
-    ).zfill(3)
-
-    if position == "H":
-        return int(s[0])
-
-    if position == "T":
-        return int(s[1])
-
-    return int(s[2])
-
-
-# ============================================================
-# FORMULA OBJECT
+# SYMBOLIC FORMULA
 # ============================================================
 
 class Formula:
-
-    def __init__(
-        self,
-        name,
-        func
-    ):
-
+    def __init__(self, name, fn):
         self.name = name
-        self.func = func
+        self.fn = fn
 
-    def calculate(self, row):
-
+    def calc(self, row):
         try:
-
-            value = self.func(row)
-
-            if value is None:
+            x = self.fn(row)
+            if x is None or not np.isfinite(x):
                 return None
-
-            if not np.isfinite(value):
-                return None
-
-            return int(round(value)) % 10
-
-        except:
-
+            return int(round(x)) % 10
+        except Exception:
             return None
 
 
-# ============================================================
-# FORMULA GENERATOR
-# ============================================================
-
-def generate_formulas():
-
+def generate_formulas(max_formulas=8000):
     formulas = []
 
-    # --------------------------------------------------------
-    # BASE VARIABLES
-    # --------------------------------------------------------
+    base = [
+        f"{x}_L{lag}"
+        for lag in [1, 2, 3, 5]
+        for x in [
+            "H", "T", "O", "T2", "O2",
+            "S3", "S2", "HT", "TO", "HO",
+            "HT2", "HO2", "TT2", "TO2",
+            "R3", "R2", "DS3"
+        ]
+    ]
 
-    base = []
-
-    for lag in [1, 2, 3, 5]:
-
-        for name in [
-
-            "H",
-            "T",
-            "O",
-
-            "T2",
-            "O2",
-
-            "S3",
-            "S2",
-
-            "HT",
-            "TO",
-            "HO",
-
-            "HT2",
-            "HO2",
-
-            "TT2",
-            "TO2",
-
-            "R3",
-            "R2",
-
-            "DS3",
-            "D2"
-
-        ]:
-
-            base.append(
-                f"{name}_L{lag}"
-            )
-
-    # --------------------------------------------------------
-    # SINGLE
-    # --------------------------------------------------------
-
+    # Singles
     for a in base:
-
         formulas.append(
             Formula(
                 a,
-                lambda row, a=a:
-                    row.get(a, 0)
+                lambda r, a=a: r.get(a, 0)
             )
         )
 
-    # --------------------------------------------------------
-    # BINARY
-    # --------------------------------------------------------
-
-    for a, b in itertools.combinations(
-        base,
-        2
-    ):
-
-        formulas.append(
+    # Binary operations
+    for a, b in itertools.combinations(base, 2):
+        formulas.extend([
             Formula(
                 f"({a}+{b})",
-                lambda row, a=a, b=b:
-                    row.get(a, 0)
-                    +
-                    row.get(b, 0)
-            )
-        )
-
-        formulas.append(
+                lambda r, a=a, b=b:
+                    r.get(a, 0) + r.get(b, 0)
+            ),
             Formula(
                 f"({a}-{b})",
-                lambda row, a=a, b=b:
-                    row.get(a, 0)
-                    -
-                    row.get(b, 0)
-            )
-        )
-
-        formulas.append(
+                lambda r, a=a, b=b:
+                    r.get(a, 0) - r.get(b, 0)
+            ),
             Formula(
                 f"ABS({a}-{b})",
-                lambda row, a=a, b=b:
-                    abs(
-                        row.get(a, 0)
-                        -
-                        row.get(b, 0)
-                    )
-            )
-        )
-
-        formulas.append(
+                lambda r, a=a, b=b:
+                    abs(r.get(a, 0) - r.get(b, 0))
+            ),
             Formula(
                 f"({a}*{b})",
-                lambda row, a=a, b=b:
-                    row.get(a, 0)
-                    *
-                    row.get(b, 0)
-            )
-        )
-
-        formulas.append(
-            Formula(
-                f"MOD9({a}+{b})",
-                lambda row, a=a, b=b:
-                    mod9(
-                        row.get(a, 0)
-                        +
-                        row.get(b, 0)
-                    )
-            )
-        )
-
-        formulas.append(
+                lambda r, a=a, b=b:
+                    r.get(a, 0) * r.get(b, 0)
+            ),
             Formula(
                 f"MOD10({a}+{b})",
-                lambda row, a=a, b=b:
-                    mod10(
-                        row.get(a, 0)
-                        +
-                        row.get(b, 0)
-                    )
-            )
-        )
-
-        formulas.append(
+                lambda r, a=a, b=b:
+                    (r.get(a, 0) + r.get(b, 0)) % 10
+            ),
+            Formula(
+                f"MOD9({a}+{b})",
+                lambda r, a=a, b=b:
+                    (r.get(a, 0) + r.get(b, 0)) % 9
+            ),
             Formula(
                 f"MOD10({a}*{b})",
-                lambda row, a=a, b=b:
-                    mod10(
-                        row.get(a, 0)
-                        *
-                        row.get(b, 0)
-                    )
-            )
-        )
-
-        formulas.append(
+                lambda r, a=a, b=b:
+                    (r.get(a, 0) * r.get(b, 0)) % 10
+            ),
             Formula(
                 f"({a}/{b})",
-                lambda row, a=a, b=b:
-                    safe_div(
-                        row.get(a, 0),
-                        row.get(b, 0)
-                    )
-            )
-        )
+                lambda r, a=a, b=b:
+                    None if r.get(b, 0) == 0
+                    else r.get(a, 0) / r.get(b, 0)
+            ),
+        ])
 
-    # --------------------------------------------------------
-    # TRIPLE
-    # --------------------------------------------------------
+        if len(formulas) >= max_formulas:
+            return formulas[:max_formulas]
 
+    # Triple formulas from a compact set to keep the app fast.
     important = [
         x for x in base
-        if (
-            x.startswith("H_")
-            or x.startswith("T_")
-            or x.startswith("O_")
-            or x.startswith("T2_")
-            or x.startswith("O2_")
-        )
+        if x.split("_")[0] in [
+            "H", "T", "O", "T2", "O2",
+            "S3", "S2", "HT", "TO", "HO"
+        ]
     ]
 
-    # จำกัดจำนวนเพื่อให้เร็ว
-    important = important[:24]
-
     for a, b, c in itertools.combinations(
-        important,
-        3
+        important, 3
     ):
-
-        formulas.append(
+        formulas.extend([
             Formula(
                 f"(({a}+{b})+{c})",
-                lambda row, a=a, b=b, c=c:
-                    row.get(a, 0)
-                    +
-                    row.get(b, 0)
-                    +
-                    row.get(c, 0)
-            )
-        )
-
-        formulas.append(
+                lambda r, a=a, b=b, c=c:
+                    r.get(a, 0) + r.get(b, 0) + r.get(c, 0)
+            ),
             Formula(
                 f"(({a}+{b})-{c})",
-                lambda row, a=a, b=b, c=c:
-                    row.get(a, 0)
-                    +
-                    row.get(b, 0)
-                    -
-                    row.get(c, 0)
-            )
-        )
-
-        formulas.append(
+                lambda r, a=a, b=b, c=c:
+                    r.get(a, 0) + r.get(b, 0) - r.get(c, 0)
+            ),
             Formula(
                 f"(({a}-{b})+{c})",
-                lambda row, a=a, b=b, c=c:
-                    row.get(a, 0)
-                    -
-                    row.get(b, 0)
-                    +
-                    row.get(c, 0)
-            )
-        )
-
-        formulas.append(
+                lambda r, a=a, b=b, c=c:
+                    r.get(a, 0) - r.get(b, 0) + r.get(c, 0)
+            ),
             Formula(
-                f"(({a}*{b})+{c})",
-                lambda row, a=a, b=b, c=c:
-                    row.get(a, 0)
-                    *
-                    row.get(b, 0)
-                    +
-                    row.get(c, 0)
-            )
-        )
-
-        formulas.append(
+                f"MOD10(({a}*{b})+{c})",
+                lambda r, a=a, b=b, c=c:
+                    (r.get(a, 0) * r.get(b, 0) + r.get(c, 0)) % 10
+            ),
             Formula(
                 f"MOD10(({a}+{b})*{c})",
-                lambda row, a=a, b=b, c=c:
-                    mod10(
-                        (
-                            row.get(a, 0)
-                            +
-                            row.get(b, 0)
-                        )
-                        *
-                        row.get(c, 0)
-                    )
-            )
-        )
+                lambda r, a=a, b=b, c=c:
+                    ((r.get(a, 0) + r.get(b, 0)) * r.get(c, 0)) % 10
+            ),
+        ])
 
-        formulas.append(
-            Formula(
-                f"MOD10({a}+{b}+{c})",
-                lambda row, a=a, b=b, c=c:
-                    mod10(
-                        row.get(a, 0)
-                        +
-                        row.get(b, 0)
-                        +
-                        row.get(c, 0)
-                    )
-            )
-        )
+        if len(formulas) >= max_formulas:
+            break
 
-    return formulas
+    return formulas[:max_formulas]
 
 
 # ============================================================
-# TARGET HIT
+# DISCOVERY / WALK-FORWARD
 # ============================================================
 
-def evaluate_formula_history(
-    formula,
-    features,
-    data,
-    start
-):
+def target_digit(data, i, position):
+    s = str(data.iloc[i]["3D"]).zfill(3)
+    return int({
+        "H": s[0],
+        "T": s[1],
+        "O": s[2],
+    }[position])
 
-    predictions = []
-    actuals = []
-
-    for i in range(start, len(data)):
-
-        row = features.iloc[i].to_dict()
-
-        pred = formula.calculate(
-            row
-        )
-
-        actual = target_digit(
-            data,
-            i,
-            "H"
-        )
-
-        predictions.append(pred)
-        actuals.append(actual)
-
-    return predictions, actuals
-
-
-# ============================================================
-# SCORE
-# ============================================================
 
 def score_formula(
     formula,
@@ -846,166 +551,75 @@ def score_formula(
     start,
     recent_window
 ):
+    preds = []
+    acts = []
 
-    predictions = []
-    actuals = []
-
-    for i in range(
-        start,
-        len(data)
-    ):
-
-        row = features.iloc[i].to_dict()
-
-        pred = formula.calculate(
-            row
+    for i in range(start, len(data)):
+        pred = formula.calc(
+            features.iloc[i].to_dict()
         )
-
         actual = target_digit(
-            data,
-            i,
-            position
+            data, i, position
         )
 
-        predictions.append(pred)
-        actuals.append(actual)
+        preds.append(pred)
+        acts.append(actual)
 
-    if len(actuals) < 5:
-
+    if len(acts) < 5:
         return None
 
-    hits = [
-        int(
-            p is not None
-            and p == a
-        )
-        for p, a in zip(
-            predictions,
-            actuals
-        )
-    ]
+    hits = np.array([
+        int(p is not None and p == a)
+        for p, a in zip(preds, acts)
+    ])
 
-    total_hit = np.mean(hits)
-
-    recent_hits = hits[
-        -recent_window:
-    ]
-
-    recent_hit = (
-        np.mean(recent_hits)
-        if recent_hits
-        else 0
+    hit = float(np.mean(hits))
+    recent = float(
+        np.mean(hits[-recent_window:])
     )
-
-    # --------------------------------------------------------
-    # STABILITY
-    # --------------------------------------------------------
 
     if len(hits) >= 20:
-
-        chunks = np.array_split(
-            np.array(hits),
-            4
-        )
-
+        chunks = np.array_split(hits, 4)
         rates = [
-            np.mean(c)
-            for c in chunks
-            if len(c)
+            float(np.mean(c))
+            for c in chunks if len(c)
         ]
-
-        stability = 1 - np.std(
-            rates
+        stability = float(
+            np.clip(1 - np.std(rates), 0, 1)
         )
-
     else:
-
         stability = 0.5
 
-    stability = float(
-        np.clip(
-            stability,
-            0,
-            1
-        )
-    )
-
-    # --------------------------------------------------------
-    # OVERFIT
-    # --------------------------------------------------------
-
     if len(hits) > recent_window:
-
-        old_hits = hits[
-            :-recent_window
-        ]
-
-        old_rate = np.mean(
-            old_hits
+        old = float(
+            np.mean(hits[:-recent_window])
         )
-
-        gap = (
-            recent_hit
-            -
-            old_rate
-        )
-
+        gap = recent - old
     else:
-
-        gap = 0
-
-    # --------------------------------------------------------
-    # SCORE
-    # --------------------------------------------------------
+        gap = 0.0
 
     score = (
-
-        total_hit * 0.40
-
-        +
-
-        recent_hit * 0.30
-
-        +
-
-        stability * 0.20
-
-        +
-
-        max(
-            0,
-            1 - abs(gap)
-        ) * 0.10
-
+        hit * 0.40
+        + recent * 0.30
+        + stability * 0.20
+        + max(0, 1 - abs(gap)) * 0.10
     )
 
-    # Penalty
+    # Penalize formulas that only suddenly work in the latest window.
     if gap > 0.50:
-
         score *= 0.65
 
     return {
-
         "formula": formula.name,
-
-        "hit_rate": total_hit,
-
-        "recent": recent_hit,
-
+        "hit": hit,
+        "recent": recent,
         "stability": stability,
-
         "gap": gap,
-
-        "score": score
-
+        "score": score,
     }
 
 
-# ============================================================
-# DISCOVERY
-# ============================================================
-
-def discover_position(
+def discover(
     data,
     features,
     formulas,
@@ -1014,326 +628,345 @@ def discover_position(
     recent_window,
     top_n
 ):
+    out = []
 
-    results = []
-
-    for formula in formulas:
-
-        result = score_formula(
-            formula,
+    for f in formulas:
+        r = score_formula(
+            f,
             features,
             data,
             position,
             start,
             recent_window
         )
+        if r is not None:
+            out.append(r)
 
-        if result is not None:
-
-            results.append(
-                result
-            )
-
-    results.sort(
+    out.sort(
         key=lambda x: x["score"],
         reverse=True
     )
 
-    return results[:top_n]
+    return out[:top_n]
 
 
-# ============================================================
-# PREDICT NEXT
-# ============================================================
-
-def predict_from_results(
-    results,
-    features
-):
-
-    if not results:
-
-        return None
-
-    row = features.iloc[
-        -1
-    ].to_dict()
-
-    predictions = []
-
-    for r in results:
-
-        # สร้าง formula lookup
-        pass
-
-    return predictions
-
-
-# ============================================================
-# FORMULA LOOKUP
-# ============================================================
-
-def formula_map(formulas):
-
-    return {
-        f.name: f
-        for f in formulas
-    }
-
-
-# ============================================================
-# POSITION PREDICTION
-# ============================================================
-
-def position_predictions(
+def predict_top(
     results,
     formulas,
     features
 ):
+    fmap = {f.name: f for f in formulas}
+    row = features.iloc[-1].to_dict()
 
-    fmap = formula_map(
-        formulas
-    )
-
-    row = features.iloc[
-        -1
-    ].to_dict()
-
-    output = []
+    out = []
 
     for r in results:
-
-        f = fmap.get(
-            r["formula"]
-        )
-
+        f = fmap.get(r["formula"])
         if f is None:
             continue
 
-        pred = f.calculate(
-            row
-        )
-
-        if pred is None:
+        p = f.calc(row)
+        if p is None:
             continue
 
-        output.append({
-
-            "Prediction": int(pred),
-
+        out.append({
+            "Digit": int(p),
             "Formula": f.name,
-
-            "Score": r["score"],
-
-            "Hit %": r["hit_rate"] * 100,
-
-            "Recent %": r["recent"] * 100,
-
-            "Stability %":
-                r["stability"] * 100
-
+            "Score %": round(r["score"] * 100, 3),
+            "Hit %": round(r["hit"] * 100, 2),
+            "Recent %": round(r["recent"] * 100, 2),
+            "Stability %": round(
+                r["stability"] * 100, 2
+            ),
         })
 
-    return output
+    return out
 
 
-# ============================================================
-# ENSEMBLE
-# ============================================================
+def ensemble_digits(pred_lists):
+    """
+    Weighted vote for H/T/O.
+    """
+    ranked = []
 
-def build_digit_ensemble(
-    prediction_lists
-):
+    for preds in pred_lists:
+        counter = {}
 
-    counter = {
-        0: {},
-        1: {},
-        2: {}
-    }
-
-    for pos, predictions in enumerate(
-        prediction_lists
-    ):
-
-        for item in predictions:
-
-            digit = item[
-                "Prediction"
-            ]
-
-            weight = (
-
-                item["Score"]
-                * 0.55
-
-                +
-
-                (
-                    item["Recent %"]
-                    / 100
-                )
-                * 0.30
-
-                +
-
-                (
-                    item["Stability %"]
-                    / 100
-                )
-                * 0.15
-
+        for p in preds:
+            d = p["Digit"]
+            w = (
+                p["Score %"] * 0.55
+                + p["Recent %"] * 0.30
+                + p["Stability %"] * 0.15
             )
+            counter[d] = counter.get(d, 0) + w
 
-            counter[pos][
-                digit
-            ] = (
-                counter[pos].get(
-                    digit,
-                    0
-                )
-                +
-                weight
+        ranked.append(
+            sorted(
+                counter.items(),
+                key=lambda x: x[1],
+                reverse=True
             )
-
-    result = []
-
-    for pos in range(3):
-
-        ranked = sorted(
-            counter[pos].items(),
-            key=lambda x: x[1],
-            reverse=True
         )
 
-        result.append(
-            ranked
-        )
+    return ranked
 
-    return result
+
+def candidate_numbers(ranked, top_digits=4):
+    if any(not x for x in ranked):
+        return pd.DataFrame()
+
+    sets = [
+        [int(x[0]) for x in r[:top_digits]]
+        for r in ranked
+    ]
+
+    rows = []
+
+    for h in sets[0]:
+        for t in sets[1]:
+            for o in sets[2]:
+                weight = 0.0
+
+                for pos, d in enumerate([h, t, o]):
+                    for dd, ww in ranked[pos]:
+                        if int(dd) == d:
+                            weight += ww
+                            break
+
+                rows.append({
+                    "Number": f"{h}{t}{o}",
+                    "Weight": weight,
+                })
+
+    return pd.DataFrame(rows).sort_values(
+        "Weight",
+        ascending=False
+    ).reset_index(drop=True)
 
 
 # ============================================================
-# GENERATE NUMBER COMBINATIONS
+# SIDEBAR
 # ============================================================
 
-def generate_number_candidates(
-    ensemble,
-    top_digits=3
+st.sidebar.header("⚙️ SETTINGS")
+
+category = st.sidebar.selectbox(
+    "เลือกหวย",
+    list(BLOG_URLS.keys())
+)
+
+max_pages = st.sidebar.slider(
+    "จำนวนหน้า Blogspot สูงสุด",
+    1, 150, 50
+)
+
+min_history = st.sidebar.slider(
+    "จำนวนงวดขั้นต่ำ",
+    20, 200, 40
+)
+
+top_n = st.sidebar.slider(
+    "Top สูตรต่อหลัก",
+    3, 30, 10
+)
+
+recent_window = st.sidebar.slider(
+    "Recent Window",
+    5, 30, 10
+)
+
+max_formulas = st.sidebar.slider(
+    "จำนวนสูตรสูงสุด",
+    1000, 12000, 5000,
+    step=500
+)
+
+st.sidebar.markdown("---")
+
+st.sidebar.caption(
+    "Seed URL จะเป็น URL ที่คุณให้มา "
+    "จากนั้นระบบจะพยายามไล่ลิงก์ใน Blogspot "
+    "เพื่อหาโพสต์ย้อนหลังในโดเมนเดียวกัน"
+)
+
+
+# ============================================================
+# URL DISPLAY
+# ============================================================
+
+st.title("🧠 LOTTO AI — AUTO SYMBOLIC EQUATION V3")
+
+st.info(
+    f"แหล่งข้อมูลที่เลือก: **{category}**\n\n"
+    f"{BLOG_URLS[category]}"
+)
+
+if st.button(
+    "🌐 ดึงข้อมูลจาก Blogspot",
+    type="primary",
+    use_container_width=True
 ):
-
-    digit_sets = []
-
-    for ranked in ensemble:
-
-        digits = [
-            int(x[0])
-            for x in ranked[
-                :top_digits
-            ]
-        ]
-
-        digit_sets.append(
-            digits
-        )
-
-    numbers = []
-
-    for a, b, c in itertools.product(
-        *digit_sets
+    with st.spinner(
+        "กำลังอ่าน Blogspot และค้นหาโพสต์ย้อนหลัง..."
     ):
-
-        number = (
-            f"{a}{b}{c}"
+        raw = crawl_blogspot(
+            BLOG_URLS[category],
+            category,
+            max_pages=max_pages
         )
 
-        weight = 0
+        data = clean_history(raw)
 
-        for pos, digit in enumerate(
-            [a, b, c]
-        ):
-
-            for d, w in ensemble[pos]:
-
-                if d == digit:
-
-                    weight += w
-                    break
-
-        numbers.append({
-
-            "Number": number,
-
-            "Weight": weight
-
-        })
-
-    numbers.sort(
-        key=lambda x: x["Weight"],
-        reverse=True
-    )
-
-    return pd.DataFrame(
-        numbers
-    )
+        st.session_state["blog_data"] = data
+        st.session_state["blog_category"] = category
 
 
 # ============================================================
-# MAIN
+# MANUAL URL OPTION
 # ============================================================
 
-if data is not None and len(data) >= min_history:
-
-    st.markdown("---")
-
-    st.header(
-        "🧠 2. AUTO SYMBOLIC DISCOVERY"
-    )
-
-    st.write(
-        f"จำนวนข้อมูล: **{len(data):,} งวด**"
+with st.expander("🔗 เพิ่ม URL Blogspot เอง"):
+    custom_url = st.text_input(
+        "URL ของหน้า Blogspot"
     )
 
     if st.button(
-        "🚀 เริ่มค้นหาสมการอัตโนมัติ",
-        type="primary",
+        "ดึง URL นี้"
+    ):
+        if custom_url.strip():
+            try:
+                raw_rows, _, _ = parse_page(
+                    custom_url.strip()
+                )
+
+                custom_df = pd.DataFrame(
+                    [
+                        {
+                            "source_url": custom_url.strip(),
+                            "3D": a,
+                            "2D": b,
+                        }
+                        for a, b in raw_rows
+                    ]
+                )
+
+                st.session_state[
+                    "custom_data"
+                ] = clean_history(
+                    custom_df
+                )
+
+                st.success(
+                    f"พบ {len(custom_df)} รายการ"
+                )
+            except Exception as e:
+                st.error(
+                    f"อ่าน URL ไม่สำเร็จ: {e}"
+                )
+
+
+# ============================================================
+# DATA VIEW
+# ============================================================
+
+data = st.session_state.get(
+    "blog_data",
+    pd.DataFrame()
+)
+
+if not st.session_state.get(
+    "blog_category"
+) == category:
+    data = pd.DataFrame()
+
+custom_data = st.session_state.get(
+    "custom_data",
+    pd.DataFrame()
+)
+
+if not custom_data.empty:
+    if data.empty:
+        data = custom_data
+    else:
+        data = pd.concat(
+            [data, custom_data],
+            ignore_index=True
+        ).drop_duplicates(
+            subset=["source_url", "3D", "2D"]
+        )
+
+
+if not data.empty:
+
+    st.subheader(
+        f"📊 ข้อมูลที่ดึงได้: {len(data):,} รายการ"
+    )
+
+    st.dataframe(
+        data.head(100),
+        use_container_width=True,
+        hide_index=True
+    )
+
+    st.caption(
+        "ระบบเก็บ source_url ไว้เพื่อให้ตรวจสอบย้อนกลับได้"
+    )
+
+
+# ============================================================
+# DISCOVERY
+# ============================================================
+
+if not data.empty and len(data) >= min_history:
+
+    st.markdown("---")
+    st.header(
+        "🧠 AUTO SYMBOLIC DISCOVERY"
+    )
+
+    if st.button(
+        "🚀 ค้นหาสมการอัตโนมัติ",
         use_container_width=True
     ):
 
         with st.spinner(
-            "AI กำลังค้นหาสมการ..."
+            "กำลังสร้างสูตรและทดสอบแบบ Walk-forward..."
         ):
-
-            # --------------------------------------------
-            # BUILD FEATURES
-            # --------------------------------------------
 
             features = build_features(
                 data
             )
 
-            # --------------------------------------------
-            # GENERATE
-            # --------------------------------------------
+            formulas = generate_formulas(
+                max_formulas=max_formulas
+            )
 
-            formulas = generate_formulas()
+            st.write(
+                f"สร้างสูตรทั้งหมด: "
+                f"**{len(formulas):,} สูตร**"
+            )
 
-            # จำกัดจำนวน
-            if len(formulas) > max_formulas:
+            results = {}
 
-                rng = np.random.default_rng(
-                    42
+            progress = st.progress(0)
+
+            for idx, pos in enumerate(
+                ["H", "T", "O"]
+            ):
+                results[pos] = discover(
+                    data,
+                    features,
+                    formulas,
+                    pos,
+                    min_history,
+                    recent_window,
+                    top_n
                 )
 
-                idx = rng.choice(
-                    len(formulas),
-                    size=max_formulas,
-                    replace=False
+                progress.progress(
+                    (idx + 1) / 3
                 )
-
-                formulas = [
-                    formulas[i]
-                    for i in idx
-                ]
 
             st.session_state[
                 "features"
@@ -1343,140 +976,65 @@ if data is not None and len(data) >= min_history:
                 "formulas"
             ] = formulas
 
-            # --------------------------------------------
-            # SEARCH
-            # --------------------------------------------
-
-            positions = [
-                "H",
-                "T",
-                "O"
-            ]
-
-            all_results = {}
-
-            progress = st.progress(
-                0
-            )
-
-            for p_idx, position in enumerate(
-                positions
-            ):
-
-                result = discover_position(
-                    data,
-                    features,
-                    formulas,
-                    position,
-                    min_history,
-                    recent_window,
-                    top_n
-                )
-
-                all_results[
-                    position
-                ] = result
-
-                progress.progress(
-                    (p_idx + 1)
-                    / 3
-                )
-
             st.session_state[
                 "results"
-            ] = all_results
+            ] = results
 
-            st.success(
-                "ค้นหาสมการเสร็จแล้ว"
-            )
+        st.success(
+            "ค้นหาสมการเสร็จแล้ว"
+        )
 
 
 # ============================================================
-# RESULTS
+# SHOW RESULTS
 # ============================================================
 
 if "results" in st.session_state:
 
-    results = st.session_state[
-        "results"
-    ]
-
-    features = st.session_state[
-        "features"
-    ]
-
-    formulas = st.session_state[
-        "formulas"
-    ]
+    results = st.session_state["results"]
+    features = st.session_state["features"]
+    formulas = st.session_state["formulas"]
 
     st.markdown("---")
-
-    st.header(
-        "🏆 3. TOP DISCOVERED EQUATIONS"
-    )
+    st.header("🏆 TOP EQUATIONS")
 
     tabs = st.tabs([
-        "🔴 หลักร้อย H",
-        "🟢 หลักสิบ T",
-        "🔵 หลักหน่วย O"
+        "🔴 H หลักร้อย",
+        "🟢 T หลักสิบ",
+        "🔵 O หลักหน่วย",
     ])
 
     prediction_lists = []
 
-    for tab, position in zip(
+    for tab, pos in zip(
         tabs,
         ["H", "T", "O"]
     ):
-
         with tab:
 
-            result = results[
-                position
-            ]
+            rows = results[pos]
 
             table = pd.DataFrame([
-
                 {
-                    "อันดับ": i + 1,
-
-                    "สูตร":
-                        r["formula"],
-
-                    "Hit %":
-                        round(
-                            r["hit_rate"] * 100,
-                            2
-                        ),
-
-                    "Recent %":
-                        round(
-                            r["recent"] * 100,
-                            2
-                        ),
-
-                    "Stability %":
-                        round(
-                            r["stability"] * 100,
-                            2
-                        ),
-
-                    "Overfit Gap %":
-                        round(
-                            r["gap"] * 100,
-                            2
-                        ),
-
-                    "SCORE":
-                        round(
-                            r["score"] * 100,
-                            3
-                        )
+                    "Rank": i + 1,
+                    "Formula": r["formula"],
+                    "Hit %": round(
+                        r["hit"] * 100, 2
+                    ),
+                    "Recent %": round(
+                        r["recent"] * 100, 2
+                    ),
+                    "Stability %": round(
+                        r["stability"] * 100, 2
+                    ),
+                    "Overfit Gap %": round(
+                        r["gap"] * 100, 2
+                    ),
+                    "SCORE %": round(
+                        r["score"] * 100, 3
+                    ),
                 }
-
-                for i, r in enumerate(
-                    result
-                )
-
+                for i, r in enumerate(rows)
             ])
 
             st.dataframe(
@@ -1485,119 +1043,79 @@ if "results" in st.session_state:
                 hide_index=True
             )
 
-            # ----------------------------------------
-            # PREDICTION
-            # ----------------------------------------
-
-            preds = position_predictions(
-                result,
+            preds = predict_top(
+                rows,
                 formulas,
                 features
             )
 
-            prediction_lists.append(
-                preds
-            )
+            prediction_lists.append(preds)
 
             st.subheader(
-                f"🔮 สูตรที่ใช้คำนวณงวดถัดไป — {position}"
+                "🔮 ผลสูตรสำหรับงวดถัดไป"
             )
 
-            pred_table = pd.DataFrame(
-                preds
-            )
-
-            if not pred_table.empty:
-
-                pred_table[
-                    "Score"
-                ] = pred_table[
-                    "Score"
-                ].round(4)
-
+            if preds:
                 st.dataframe(
-                    pred_table,
+                    pd.DataFrame(preds),
                     use_container_width=True,
                     hide_index=True
                 )
 
 
 # ============================================================
-# ENSEMBLE
+# DIGIT ENSEMBLE
 # ============================================================
 
 if "results" in st.session_state:
 
     st.markdown("---")
-
     st.header(
-        "🎯 4. SYMBOLIC EQUATION ENSEMBLE"
+        "🎯 SYMBOLIC EQUATION ENSEMBLE"
     )
 
-    results = st.session_state[
-        "results"
-    ]
+    results = st.session_state["results"]
+    features = st.session_state["features"]
+    formulas = st.session_state["formulas"]
 
-    features = st.session_state[
-        "features"
-    ]
-
-    formulas = st.session_state[
-        "formulas"
-    ]
-
-    prediction_lists = []
-
-    for position in [
-        "H",
-        "T",
-        "O"
-    ]:
-
-        prediction_lists.append(
-            position_predictions(
-                results[position],
-                formulas,
-                features
-            )
+    prediction_lists = [
+        predict_top(
+            results[p],
+            formulas,
+            features
         )
+        for p in ["H", "T", "O"]
+    ]
 
-    ensemble = build_digit_ensemble(
+    ranked = ensemble_digits(
         prediction_lists
     )
 
     c1, c2, c3 = st.columns(3)
 
-    for col, title, ranked in zip(
+    for col, title, values in zip(
         [c1, c2, c3],
         ["🔴 H", "🟢 T", "🔵 O"],
-        ensemble
+        ranked
     ):
-
         with col:
+            st.subheader(title)
 
-            st.subheader(
-                title
-            )
-
-            if ranked:
-
-                dtable = pd.DataFrame(
-                    ranked[:10],
+            if values:
+                dt = pd.DataFrame(
+                    values[:10],
                     columns=[
                         "Digit",
                         "Weight"
                     ]
                 )
 
-                dtable[
+                dt["Weight"] = dt[
                     "Weight"
-                ] = dtable[
-                    "Weight"
-                ].round(4)
+                ].round(3)
 
                 st.dataframe(
-                    dtable,
+                    dt,
                     use_container_width=True,
                     hide_index=True
                 )
@@ -1610,64 +1128,25 @@ if "results" in st.session_state:
 if "results" in st.session_state:
 
     st.markdown("---")
-
     st.header(
-        "🔢 5. TOP 3-DIGIT CANDIDATES"
+        "🔢 TOP 3-DIGIT CANDIDATES"
     )
 
-    results = st.session_state[
-        "results"
-    ]
-
-    features = st.session_state[
-        "features"
-    ]
-
-    formulas = st.session_state[
-        "formulas"
-    ]
-
-    prediction_lists = []
-
-    for position in [
-        "H",
-        "T",
-        "O"
-    ]:
-
-        prediction_lists.append(
-            position_predictions(
-                results[position],
-                formulas,
-                features
-            )
-        )
-
-    ensemble = build_digit_ensemble(
-        prediction_lists
-    )
-
-    candidates = generate_number_candidates(
-        ensemble,
+    candidates = candidate_numbers(
+        ranked,
         top_digits=4
     )
 
     if not candidates.empty:
 
-        candidates[
+        candidates["Weight"] = candidates[
             "Weight"
-        ] = candidates[
-            "Weight"
-        ].round(5)
+        ].round(3)
 
         st.dataframe(
-            candidates.head(20),
+            candidates.head(30),
             use_container_width=True,
             hide_index=True
-        )
-
-        st.subheader(
-            "🔥 Top 10"
         )
 
         top10 = candidates.head(
@@ -1675,195 +1154,134 @@ if "results" in st.session_state:
         )["Number"].tolist()
 
         st.success(
-            "   ".join(
-                top10
-            )
+            "   ".join(top10)
         )
 
 
 # ============================================================
-# RECENT 10 TEST
+# RECENT 10 VALIDATION
 # ============================================================
 
 if "results" in st.session_state:
 
     st.markdown("---")
-
     st.header(
-        "🧪 6. ตรวจสอบสูตรกับ 10 งวดล่าสุด"
+        "🧪 CHECK — 10 งวดล่าสุด"
     )
 
-    data = data.reset_index(
-        drop=True
-    )
+    results = st.session_state["results"]
+    features = st.session_state["features"]
+    formulas = st.session_state["formulas"]
 
-    features = st.session_state[
-        "features"
-    ]
+    fmap = {
+        f.name: f
+        for f in formulas
+    }
 
-    formulas = st.session_state[
-        "formulas"
-    ]
-
-    results = st.session_state[
-        "results"
-    ]
-
-    fmap = formula_map(
-        formulas
-    )
-
-    recent_n = min(
-        10,
+    n = min(
+        recent_window,
         len(data)
     )
 
-    recent_rows = []
+    rows = []
 
     for i in range(
-        len(data) - recent_n,
+        len(data) - n,
         len(data)
     ):
 
-        row = features.iloc[
-            i
-        ].to_dict()
+        row = features.iloc[i].to_dict()
 
-        actual = data.iloc[
-            i
-        ]["3D"]
+        pred = []
 
-        pred_digits = []
+        for pos in ["H", "T", "O"]:
 
-        for position in [
-            "H",
-            "T",
-            "O"
-        ]:
+            if not results[pos]:
+                pred.append("?")
+                continue
 
-            best = results[
-                position
-            ][0]
+            best = results[pos][0]
 
-            formula = fmap.get(
+            f = fmap.get(
                 best["formula"]
             )
 
-            if formula:
-
-                pred = formula.calculate(
-                    row
+            if f is None:
+                pred.append("?")
+            else:
+                x = f.calc(row)
+                pred.append(
+                    "?"
+                    if x is None
+                    else str(x)
                 )
 
-            else:
+        p = "".join(pred)
 
-                pred = None
-
-            pred_digits.append(
-                "?"
-                if pred is None
-                else str(pred)
-            )
-
-        prediction = "".join(
-            pred_digits
-        )
-
-        recent_rows.append({
-
-            "งวด": i + 1,
-
-            "AI Formula":
-                prediction,
-
-            "Actual":
-                actual,
-
-            "ตรง":
-                prediction == actual
-
+        rows.append({
+            "Index": i + 1,
+            "AI": p,
+            "Actual": data.iloc[i]["3D"],
+            "Exact": p == data.iloc[i]["3D"],
         })
 
-    recent_df = pd.DataFrame(
-        recent_rows
-    )
+    check = pd.DataFrame(rows)
 
     st.dataframe(
-        recent_df,
+        check,
         use_container_width=True,
         hide_index=True
     )
 
-    recent_accuracy = (
-        recent_df["ตรง"].mean()
-        * 100
-    )
-
     st.metric(
-        "Exact Match 10 งวดล่าสุด",
-        f"{recent_accuracy:.1f}%"
+        f"Exact Match {n} งวด",
+        f"{check['Exact'].mean() * 100:.1f}%"
     )
 
 
 # ============================================================
-# EXPLANATION
+# WARNINGS / HELP
 # ============================================================
 
 st.markdown("---")
 
 with st.expander(
-    "ℹ️ วิธีอ่านผล"
+    "⚠️ ข้อควรระวังในการใช้ตัวดึงข้อมูล"
 ):
-
     st.markdown("""
-### ตัวอย่าง
+1. Blogspot แต่ละโพสต์อาจมีรูปแบบข้อความไม่เหมือนกัน
+2. ระบบจะพยายามอ่าน `.post-body`, `.entry-content` และ `article`
+3. ถ้าหน้าเว็บใช้รูปภาพแทนตัวเลขทั้งหมด ระบบจะอ่านเลขจากรูปไม่ได้
+4. ถ้าคอลัมน์ 3D/2D ในโพสต์ไม่มีป้ายกำกับชัดเจน ระบบจะใช้ fallback parser
+5. หลังดึงข้อมูลควรตรวจตาราง "ข้อมูลที่ดึงได้" ก่อนกดค้นหาสมการ
+6. ถ้าข้อมูลผิด การค้นหาสมการก็จะผิดตามข้อมูล
+7. คะแนน Hit/Recent/Stability เป็นสถิติย้อนหลัง ไม่ใช่การรับประกันผลอนาคต
+""")
 
-ถ้า AI ค้นพบ
+with st.expander(
+    "🧩 ความหมายของสูตร"
+):
+    st.markdown("""
+ตัวอย่าง:
 
 `MOD10(H_L1 + O2_L1)`
 
-หมายถึง
+หมายถึงนำหลักร้อยของงวดก่อนหน้า
+บวกกับหลักหน่วยของเลข 2 ตัวงวดก่อนหน้า
+แล้วเอาเศษจากการหาร 10
 
-**เอาหลักร้อยของงวดก่อน + หลักหน่วยของเลข 2 ตัวงวดก่อน แล้ว Mod 10**
+`ABS(T_L1 - T2_L1)`
 
-ถ้าได้
+หมายถึงหาค่าสัมบูรณ์ของ
+หลักสิบ 3 ตัวงวดก่อนหน้า
+ลบหลักสิบ 2 ตัวงวดก่อนหน้า
 
-`6 + 5 = 11`
+`(({H_L1}+{T_L1})*{O_L1})`
 
-ดังนั้น
-
-`11 Mod 10 = 1`
-
-AI จะเสนอ **1** สำหรับตำแหน่งนั้น
-
----
-
-### Score
-
-คะแนนรวมมาจาก
-
-- Historical Hit Rate
-- Recent Window
-- Stability
-- Overfit Control
-
-ดังนั้นสูตรที่ได้ Hit สูงอย่างเดียวไม่ได้หมายความว่าจะเป็นสูตรอันดับ 1 เสมอไป
-
----
-
-### จุดสำคัญ
-
-ระบบนี้ไม่ได้บอกว่า "พบสูตรลับของหวย"
-
-แต่เป็นการค้นหา **รูปแบบทางคณิตศาสตร์ที่เคยสัมพันธ์กับข้อมูลย้อนหลัง** แล้วตรวจสอบว่าความสัมพันธ์นั้นยังเสถียรหรือไม่
+เป็นตัวอย่างโครงสร้างการรวม 3 ตัวแปร
 """)
 
-
-# ============================================================
-# FOOTER
-# ============================================================
-
 st.caption(
-    "LOTTO AI AUTO SYMBOLIC EQUATION V2 • "
-    "Research / Experimental Pattern Discovery"
+    "LOTTO AI AUTO SYMBOLIC EQUATION V3 • "
+    "Blogspot + Walk-forward + Position Search"
 )
