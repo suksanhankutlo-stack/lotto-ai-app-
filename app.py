@@ -1,5 +1,5 @@
 # ============================================================
-# LOTTO AI - AUTO SYMBOLIC EQUATION V3 (FAST OPTIMIZED)
+# LOTTO AI - AUTO SYMBOLIC EQUATION V3 (FAST OPTIMIZED & BUG FIXED)
 # ============================================================
 
 import re
@@ -304,8 +304,20 @@ def score_formula(formula, features, data, position, start, recent_window):
     hits = np.array([int(p is not None and p == a) for p, a in zip(preds, acts)])
     hit = float(np.mean(hits))
     recent = float(np.mean(hits[-recent_window:]))
-    stability = float(np.clip(1 - np.std(np.array_split(hits, 4)), 0, 1)) if len(hits) >= 20 else 0.5
-    gap = recent - float(np.mean(hits[:-recent_window])) if len(hits) > recent_window else 0.0
+    
+    # --- FIXED STABILITY CALCULATION ---
+    if len(hits) >= 20:
+        chunks = np.array_split(hits, 4)
+        rates = [float(np.mean(c)) for c in chunks if len(c) > 0]
+        stability = float(np.clip(1 - np.std(rates), 0, 1))
+    else:
+        stability = 0.5
+        
+    if len(hits) > recent_window:
+        gap = recent - float(np.mean(hits[:-recent_window]))
+    else:
+        gap = 0.0
+        
     score = hit * 0.40 + recent * 0.30 + stability * 0.20 + max(0, 1 - abs(gap)) * 0.10
 
     if gap > 0.50:
