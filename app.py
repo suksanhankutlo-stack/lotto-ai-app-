@@ -1,12 +1,5 @@
 # ============================================================
 # LOTTO AI - AUTO SYMBOLIC EQUATION V3 (FAST OPTIMIZED)
-# BLOGSPOT AUTO SCRAPER + POSITION EQUATION DISCOVERY
-# ============================================================
-# Install:
-#   pip install streamlit pandas numpy requests beautifulsoup4
-#
-# Run:
-#   streamlit run lotto_symbolic_blogspot_v3.py
 # ============================================================
 
 import re
@@ -49,10 +42,6 @@ HEADERS = {
 }
 
 
-# ============================================================
-# HTTP / BLOGSPOT
-# ============================================================
-
 @st.cache_data(ttl=1800, show_spinner=False)
 def fetch_html(url):
     r = requests.get(url, headers=HEADERS, timeout=20)
@@ -64,17 +53,14 @@ def clean_text(html):
     soup = BeautifulSoup(html, "html.parser")
     for tag in soup(["script", "style", "noscript"]):
         tag.decompose()
-
     root = (
         soup.select_one(".post-body")
         or soup.select_one(".entry-content")
         or soup.select_one("article")
         or soup.body
     )
-
     if root is None:
         return "", soup
-
     return root.get_text("\n", strip=True), soup
 
 
@@ -102,10 +88,6 @@ def blog_links(url, soup):
     return list(dict.fromkeys(out))
 
 
-# ============================================================
-# NUMBER EXTRACTION
-# ============================================================
-
 def norm3(x):
     s = re.sub(r"\D", "", str(x))
     return s.zfill(3)[-3:] if s else None
@@ -118,33 +100,25 @@ def norm2(x):
 
 def extract_labeled_numbers(text):
     t = text.replace("\u200b", " ")
-
     p3 = [
         r"(?:เลขสามตัว|3\s*ตัว|สามตัว|3d|3\s*digit)"
         r"\s*[:=\-]?\s*([0-9]{3})",
         r"(?:สามตัวบน|3\s*ตัวบน)"
         r"\s*[:=\-]?\s*([0-9]{3})",
     ]
-
     p2 = [
         r"(?:เลขสองตัว|2\s*ตัว|สองตัว|2d|2\s*digit)"
         r"\s*[:=\-]?\s*([0-9]{2})",
         r"(?:สองตัวล่าง|2\s*ตัวล่าง)"
         r"\s*[:=\-]?\s*([0-9]{2})",
     ]
-
-    three = []
-    two = []
-
+    three, two = [], []
     for p in p3:
-        three += re.findall(p, t, flags=I if 'I' in globals() else re.I)
-
+        three += re.findall(p, t, flags=re.I)
     for p in p2:
         two += re.findall(p, t, flags=re.I)
-
     three = [norm3(x) for x in three if norm3(x)]
     two = [norm2(x) for x in two if norm2(x)]
-
     return list(dict.fromkeys(three)), list(dict.fromkeys(two))
 
 
@@ -181,10 +155,6 @@ def parse_page(url):
     return rows, text, soup
 
 
-# ============================================================
-# HISTORICAL PAGE CRAWLER
-# ============================================================
-
 def score_link_for_category(url, category):
     s = url.lower()
     score = 0
@@ -210,7 +180,6 @@ def crawl_blogspot(start_url, category, max_pages=30):
     visited = set()
     queue = [(start_url, 100)]
     collected = []
-
     while queue and len(visited) < max_pages:
         queue.sort(key=lambda x: x[1], reverse=True)
         url, _ = queue.pop(0)
@@ -249,10 +218,6 @@ def clean_history(df):
     return out
 
 
-# ============================================================
-# SYMBOLIC FEATURES
-# ============================================================
-
 def make_raw(row):
     a = str(row["3D"]).zfill(3)
     b = str(row["2D"]).zfill(2)
@@ -281,10 +246,6 @@ def build_features(data):
     return pd.DataFrame(rows).fillna(0)
 
 
-# ============================================================
-# SYMBOLIC FORMULA
-# ============================================================
-
 class Formula:
     def __init__(self, name, fn):
         self.name = name
@@ -300,7 +261,6 @@ class Formula:
             return None
 
 
-@st.cache_data(show_spinner=False)
 def generate_formulas(max_formulas=1000):
     formulas = []
     base = [
@@ -324,10 +284,6 @@ def generate_formulas(max_formulas=1000):
 
     return formulas[:max_formulas]
 
-
-# ============================================================
-# DISCOVERY / WALK-FORWARD
-# ============================================================
 
 def target_digit(data, i, position):
     s = str(data.iloc[i]["3D"]).zfill(3)
@@ -423,10 +379,10 @@ def candidate_numbers(ranked, top_digits=4):
 
 
 # ============================================================
-# SIDEBAR (Optimized Defaults for Speed)
+# SIDEBAR
 # ============================================================
 
-st.sidebar.header("⚙️ SETTINGS (Speed Optimized)")
+st.sidebar.header("⚙️ SETTINGS")
 
 category = st.sidebar.selectbox("เลือกหวย", list(BLOG_URLS.keys()))
 max_pages = st.sidebar.slider("จำนวนหน้า Blogspot สูงสุด", 1, 50, 20)
@@ -440,7 +396,7 @@ max_formulas = st.sidebar.slider("จำนวนสูตรสูงสุด"
 # MAIN UI
 # ============================================================
 
-st.title("🧠 LOTTO AI — AUTO SYMBOLIC EQUATION V3 (FAST)")
+st.title("🧠 LOTTO AI — AUTO SYMBOLIC EQUATION V3")
 
 st.info(f"แหล่งข้อมูลที่เลือก: **{category}**\n\n{BLOG_URLS[category]}")
 
@@ -468,7 +424,7 @@ if not data.empty and len(data) >= min_history:
     st.markdown("---")
     st.header("🧠 AUTO SYMBOLIC DISCOVERY")
 
-    if st.button("🚀 ค้นหาสมการอัตโนมัติ (โหมดรวดเร็ว)", use_container_width=True):
+    if st.button("🚀 ค้นหาสมการอัตโนมัติ", use_container_width=True):
         with st.spinner("กำลังประมวลผลสูตร..."):
             features = build_features(data)
             formulas = generate_formulas(max_formulas=max_formulas)
