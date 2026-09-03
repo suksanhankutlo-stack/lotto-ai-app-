@@ -368,10 +368,12 @@ class Formula:
 # GENERATE SYMBOLIC FORMULAS (ADDED CACHE)
 # ============================================================
 
-# 🛠️ FIX 3: Cache เพื่อลดภาระการคำนวณ (Optimization)
-@st.cache_data(show_spinner=False)
+# 🛠️ FIX 3: เปลี่ยนมาใช้ @st.cache_resource เนื่องจากภายในมี lambda function
+@st.cache_resource(show_spinner=False)
 def generate_formulas(max_formulas=5000):
     formulas = []
+    # ...
+
     base = [
         f"{x}_L{lag}"
         for lag in [1, 2, 3, 5]
