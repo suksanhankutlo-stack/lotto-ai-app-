@@ -136,7 +136,7 @@ def extract_labeled_numbers(text):
     return list(dict.fromkeys(three)), list(dict.fromkeys(two))
 
 # ============================================================
-# DATE & PAGE PARSING (FIXED)
+# DATE & PAGE PARSING (🌟 ลอจิกใหม่: บังคับหาตารางสถิติอันดับ 1)
 # ============================================================
 
 def get_page_date(soup, url):
@@ -160,37 +160,46 @@ def parse_page(url):
     page_date = get_page_date(soup, url)
     rows = []
     
-    threes, twos = extract_labeled_numbers(text)
-    if threes and twos:
-        n = min(len(threes), len(twos))
-        for i in range(n):
-            rows.append({"3D": threes[i], "2D": twos[i], "date": page_date})
-            
+    # 🌟 1. ค้นหารูปแบบประวัติโดยตรงก่อนเสมอ (เช่น "* 2026-09-02 | 351 | 53")
+    for line in text.splitlines():
+        line = line.strip()
+        if not line: continue
+        
+        # Regex: วันที่ (YYYY-MM-DD หรือ DD/MM/YY) คั่นด้วยอะไรก็ได้ ตามด้วย 3 หลัก และ 2 หลัก
+        match = re.search(r"(\d{4}-\d{2}-\d{2}|\d{2}/\d{2}/\d{2,4})\D+?(\d{3})\D+?(\d{2})(?!\d)", line)
+        if match:
+            d_str, d3, d2 = match.groups()
+            rows.append({"3D": d3, "2D": d2, "date": d_str})
+    
+    # 2. ถ้าไม่เจอตารางสถิติแบบ List ถึงจะค่อยไปงมหาตัวเลขเดี่ยวๆ ในหน้า (Fallback)
     if not rows:
-        for line in text.splitlines():
-            line = line.strip()
-            if not line: continue
-            
-            d_match = re.search(r"(\d{4}-\d{2}-\d{2}|\d{2}/\d{2}/\d{2,4})", line)
-            line_date = d_match.group(1) if d_match else page_date
-            clean_line = line.replace(d_match.group(1), "") if d_match else line
-            
-            nums = re.findall(r"(?<!\d)\d{1,3}(?!\d)", clean_line)
-            threes_list = [x for x in nums if len(x) == 3]
-            twos_list = [x for x in nums if len(x) <= 2]
-            
-            if threes_list and twos_list:
-                rows.append({
-                    "3D": norm3(threes_list[0]),
-                    "2D": norm2(twos_list[-1]),
-                    "date": line_date
-                })
+        threes, twos = extract_labeled_numbers(text)
+        if threes and twos:
+            n = min(len(threes), len(twos))
+            for i in range(n):
+                rows.append({"3D": threes[i], "2D": twos[i], "date": page_date})
+                
+        # 3. Fallback ลำดับสุดท้าย (Generic Pairs)
+        if not rows:
+            for line in text.splitlines():
+                line = line.strip()
+                if not line: continue
+                nums = re.findall(r"(?<!\d)\d{1,3}(?!\d)", line)
+                threes_list = [x for x in nums if len(x) == 3]
+                twos_list = [x for x in nums if len(x) <= 2]
+                if threes_list and twos_list:
+                    rows.append({
+                        "3D": norm3(threes_list[0]),
+                        "2D": norm2(twos_list[-1]),
+                        "date": page_date
+                    })
 
+    # กรองข้อมูลซ้ำ (ใช้ 3D, 2D และ Date เป็นเงื่อนไข เพื่อไม่ให้ประวัติหาย)
     unique_rows = []
     seen = set()
     for r in rows:
         if r["3D"] and r["2D"]:
-            k = (r["3D"], r["2D"])
+            k = (r["3D"], r["2D"], r["date"])
             if k not in seen:
                 seen.add(k)
                 unique_rows.append(r)
@@ -265,16 +274,20 @@ def clean_history(df):
     if df.empty: return df
     out = df.copy()
 
-    out["published_date"] = pd.to_datetime(out["published_date"], errors="coerce", utc=True).dt.tz_localize(None)
-    out["published_date"] = out["published_date"].fillna(pd.Timestamp('1970-01-01')) 
-    
-    out = out.sort_values(by="published_date", ascending=True)
-
+    # จัดการรูปแบบตัวเลขก่อน เพื่อให้ Drop Duplicate ถูกต้อง
     out["3D"] = out["3D"].apply(norm3)
     out["2D"] = out["2D"].apply(norm2)
     out = out.dropna(subset=["3D", "2D"])
+
+    # จัดการ Date Format ให้เสถียร
+    out["published_date"] = pd.to_datetime(out["published_date"], errors="coerce", utc=True).dt.tz_localize(None)
+    out["published_date"] = out["published_date"].fillna(pd.Timestamp('1970-01-01')) 
     
-    out = out.drop_duplicates(subset=["source_url", "3D", "2D"], keep='last').reset_index(drop=True)
+    # เอา source_url ออกจาก subset เพื่อให้ประวัติใน URL หน้าเดียวกันไม่โดนตัดทิ้ง
+    out = out.drop_duplicates(subset=["published_date", "3D", "2D"], keep='last')
+    
+    # 🌟 เรียงลำดับวันที่จากเก่าไปใหม่ เพื่อให้ Backtest ตรงความจริง
+    out = out.sort_values(by="published_date", ascending=True).reset_index(drop=True)
     out["row_id"] = np.arange(len(out))
     
     return out
@@ -317,7 +330,7 @@ def build_next_features(data):
     return pd.DataFrame([r]).fillna(0)
 
 # ============================================================
-# SYMBOLIC ENGINE (FIXED CACHE)
+# SYMBOLIC ENGINE (CACHE RESOURCE)
 # ============================================================
 
 class Formula:
@@ -600,14 +613,19 @@ if not custom_data.empty:
     else:
         data = pd.concat([data, custom_data], ignore_index=True)
         data = data.sort_values(by="published_date", ascending=True)
-        data = data.drop_duplicates(subset=["source_url", "3D", "2D"], keep='last').reset_index(drop=True)
+        data = data.drop_duplicates(subset=["published_date", "3D", "2D"], keep='last').reset_index(drop=True)
 
 if not data.empty:
     st.subheader(f"📊 ข้อมูลที่ดึงได้ {len(data):,} รายการ (เรียงตามเวลาแล้ว)")
     disp_data = data.copy()
     if 'published_date' in disp_data.columns:
         disp_data['Date'] = disp_data['published_date'].dt.strftime('%Y-%m-%d').replace('1970-01-01', 'Unknown')
-    st.dataframe(disp_data.head(100), use_container_width=True, hide_index=True)
+    
+    # 🌟 เลื่อนคอลัมน์ Date มาไว้ด้านหน้าสุดเพื่อให้ดูง่ายขึ้น
+    cols = ['Date', '3D', '2D', 'source_url']
+    cols = [c for c in cols if c in disp_data.columns] + [c for c in disp_data.columns if c not in cols]
+    
+    st.dataframe(disp_data[cols].head(100), use_container_width=True, hide_index=True)
 
     if len(data) < min_history:
         st.warning(f"ข้อมูลมีเพียง {len(data)} งวด ต้องการอย่างน้อย {min_history} งวด")
