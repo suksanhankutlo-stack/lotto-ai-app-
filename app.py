@@ -37,7 +37,7 @@ BLOG_URLS = {
 }
 
 category = st.sidebar.selectbox("เลือกหวย", list(BLOG_URLS.keys()))
-max_pages = st.sidebar.slider("จำนวนหน้า Blogspot สูงสุด", 1, 150, 50)
+max_pages = st.sidebar.slider("จำนวนหน้า Blogspot สูงสุด", 1, 150, 80) # ปรับค่าเริ่มต้นเป็น 80 หน้า
 min_history = st.sidebar.slider("จำนวนงวดขั้นต่ำ", 20, 200, 40)
 max_formulas = st.sidebar.slider("จำนวนสูตรสูงสุด", 1000, 12000, 5000, step=500)
 LOCK_WINDOW = st.sidebar.slider("หน้าต่างประเมินสูตร (Lock Window)", 10, 50, 20)
@@ -161,7 +161,6 @@ def parse_page(url):
     page_title = soup.title.get_text(strip=True) if soup.title else ""
     rows = []
     
-    # 1. ค้นหารูปแบบประวัติโดยตรงก่อนเสมอ (เช่น "* 2026-09-02 | 351 | 53")
     for line in text.splitlines():
         line = line.strip()
         if not line: continue
@@ -171,7 +170,6 @@ def parse_page(url):
             d_str, d3, d2 = match.groups()
             rows.append({"3D": d3, "2D": d2, "date": d_str})
     
-    # 2. ถ้าไม่เจอตารางสถิติแบบ List ถึงจะค่อยไปงมหาตัวเลขเดี่ยวๆ ในหน้า
     if not rows:
         threes, twos = extract_labeled_numbers(text)
         if threes and twos:
@@ -179,7 +177,6 @@ def parse_page(url):
             for i in range(n):
                 rows.append({"3D": threes[i], "2D": twos[i], "date": page_date})
                 
-        # 3. Fallback ลำดับสุดท้าย
         if not rows:
             for line in text.splitlines():
                 line = line.strip()
@@ -206,18 +203,17 @@ def parse_page(url):
     return unique_rows, text, soup, page_date, page_title
 
 # ============================================================
-# CRAWLER & STRICT CATEGORY FILTER (🌟 อัปเดตใหม่)
+# CRAWLER & STRICT CATEGORY FILTER
 # ============================================================
 
 def is_page_relevant(category, url, start_url, title, text):
-    """ฟังก์ชันเช็คเนื้อหาว่าตรงกับหวยที่เลือกหรือไม่ ป้องกันข้อมูลหวยอื่นมาปน"""
-    if url == start_url:
-        return True # อนุญาตหน้าเริ่มต้นเสมอ
+    # ปรับให้ยืดหยุ่นขึ้นนิดหน่อยสำหรับหน้าแรกและหน้าหมวดหมู่
+    if url == start_url or url == f"{urlparse(start_url).scheme}://{urlparse(start_url).netloc}" or "/search" in url:
+        return True 
         
     title_lower = title.lower()
-    text_snippet = text[:1000].lower() # ตรวจสอบ 1,000 ตัวอักษรแรก
+    text_snippet = text[:1000].lower() 
     
-    # คำค้นหาสำหรับแต่ละหมวดหมู่
     keywords = {
         "หวยไทย": ["ไทย", "รัฐบาล", "lotto", "สลากกินแบ่ง"],
         "หวยลาว": ["ลาว", "lao", "พัฒนา"],
@@ -240,18 +236,27 @@ def is_page_relevant(category, url, start_url, title, text):
 def score_link_for_category(url, category):
     s = url.lower()
     score = 0
-    # ให้คะแนนลิงก์ที่มี Label ตรงหมวดหมู่เป็นพิเศษ
     label_keys = {
         "หวยไทย": ["ไทย"], "หวยลาว": ["ลาว"], "หวยฮานอย": ["ฮานอย"],
         "หวยธกส": ["ธกส"], "หวยออมสิน": ["ออมสิน"], "หวยมาเลย์": ["มาเลย์"]
     }
     for k in label_keys.get(category, []):
         if k in s: score += 5
+        
+    # 🌟 ให้ความสำคัญกับปุ่ม "หน้าถัดไป" (updated-max) และหน้า "หมวดหมู่" (search/label) สูงสุด
+    if "updated-max" in s: score += 20
+    if "search/label" in s: score += 10
+    
     return score
 
 def crawl_blogspot(start_url, category, max_pages=80):
     visited = set()
     queue = [(start_url, 100)]
+    
+    # 🌟 บังคับใส่ Homepage ลงไปในคิวด้วย เพื่อให้แน่ใจว่าบอทจะไปเก็บข้อมูลล่าสุดของวันนี้เสมอ
+    base_url = f"{urlparse(start_url).scheme}://{urlparse(start_url).netloc}"
+    queue.append((base_url, 95))
+    
     collected = []
 
     while queue and len(visited) < max_pages:
@@ -266,7 +271,6 @@ def crawl_blogspot(start_url, category, max_pages=80):
         except Exception:
             continue
 
-        # 🌟 ถ้าระบบตรวจพบว่าเป็นหน้าเพจของหวยอื่น จะข้ามการบันทึกข้อมูลหน้านี้ทันที
         if is_page_relevant(category, url, start_url, page_title, text):
             if rows:
                 for r in rows:
@@ -277,11 +281,12 @@ def crawl_blogspot(start_url, category, max_pages=80):
                         "2D": r["2D"]
                     })
 
-        # เก็บลิงก์เพื่อไปค้นหาต่อ
         for link in blog_links(url, soup):
             if link in visited: continue
             low = link.lower()
-            if any(x in low for x in ["/p/", "/search", "/feeds/", ".xml", "javascript:", "mailto:"]): continue
+            
+            # 🌟 ปลดล็อกคำว่า "/search" ออกจาก Blacklist แล้ว เพื่อให้บอทกดเปลี่ยนหน้า (Pagination) ได้
+            if any(x in low for x in ["/p/", "/feeds/", ".xml", "javascript:", "mailto:"]): continue
             
             score = score_link_for_category(link, category)
             if ".html" in low: score += 1
@@ -589,11 +594,11 @@ def run_lock_backtest(data, features, formulas, start_index):
 # ============================================================
 
 st.title("🧠 LOTTO AI — AUTO SYMBOLIC EQUATION V4")
-st.caption("Chronological Order Fix • Strict Category Filter • Formula Lock")
+st.caption("Chronological Order Fix • Strict Category Filter • Pagination Fixed")
 st.info(f"แหล่งข้อมูล: **{category}**\n\n{BLOG_URLS[category]}")
 
 if st.button("🌐 ดึงข้อมูลจาก Blogspot", type="primary", use_container_width=True):
-    with st.spinner("กำลังอ่าน Blogspot และคัดกรองข้อมูลเฉพาะหมวดหมู่นี้..."):
+    with st.spinner("กำลังวิ่งเก็บข้อมูลจากหน้าแรกและหน้าถัดไปเรื่อยๆ..."):
         raw = crawl_blogspot(BLOG_URLS[category], category, max_pages=max_pages)
         data = clean_history(raw)
         
@@ -601,7 +606,7 @@ if st.button("🌐 ดึงข้อมูลจาก Blogspot", type="primary
         st.session_state["blog_category"] = category
         for key in ["formula_lock", "results", "features", "formulas"]:
             st.session_state.pop(key, None)
-    st.success(f"ดึงข้อมูลสำเร็จ {len(data):,} งวด (คัดกรองเฉพาะ {category} เรียบร้อย)")
+    st.success(f"ดึงข้อมูลสำเร็จ {len(data):,} งวด")
 
 with st.expander("🔗 เพิ่ม URL Blogspot เอง"):
     custom_url = st.text_input("URL ของหน้า Blogspot")
@@ -642,7 +647,9 @@ if not data.empty:
     
     cols = ['Date', '3D', '2D', 'source_url']
     cols = [c for c in cols if c in disp_data.columns] + [c for c in disp_data.columns if c not in cols]
-    st.dataframe(disp_data[cols].head(100), use_container_width=True, hide_index=True)
+    
+    # 🌟 โชว์ตารางโดยให้ข้อมูลใหม่ล่าสุด (ปัจจุบัน) อยู่ด้านบนสุด เพื่อให้เช็คง่าย
+    st.dataframe(disp_data[cols].sort_values(by="Date", ascending=False).head(100), use_container_width=True, hide_index=True)
 
     if len(data) < min_history:
         st.warning(f"ข้อมูลมีเพียง {len(data)} งวด ต้องการอย่างน้อย {min_history} งวด")
