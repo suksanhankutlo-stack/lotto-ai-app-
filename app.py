@@ -136,7 +136,7 @@ def extract_labeled_numbers(text):
     return list(dict.fromkeys(three)), list(dict.fromkeys(two))
 
 # ============================================================
-# DATE & PAGE PARSING (🌟 ลอจิกใหม่: บังคับหาตารางสถิติอันดับ 1)
+# DATE & PAGE PARSING
 # ============================================================
 
 def get_page_date(soup, url):
@@ -158,20 +158,20 @@ def parse_page(url):
     html = fetch_html(url)
     text, soup = clean_text(html)
     page_date = get_page_date(soup, url)
+    page_title = soup.title.get_text(strip=True) if soup.title else ""
     rows = []
     
-    # 🌟 1. ค้นหารูปแบบประวัติโดยตรงก่อนเสมอ (เช่น "* 2026-09-02 | 351 | 53")
+    # 1. ค้นหารูปแบบประวัติโดยตรงก่อนเสมอ (เช่น "* 2026-09-02 | 351 | 53")
     for line in text.splitlines():
         line = line.strip()
         if not line: continue
         
-        # Regex: วันที่ (YYYY-MM-DD หรือ DD/MM/YY) คั่นด้วยอะไรก็ได้ ตามด้วย 3 หลัก และ 2 หลัก
         match = re.search(r"(\d{4}-\d{2}-\d{2}|\d{2}/\d{2}/\d{2,4})\D+?(\d{3})\D+?(\d{2})(?!\d)", line)
         if match:
             d_str, d3, d2 = match.groups()
             rows.append({"3D": d3, "2D": d2, "date": d_str})
     
-    # 2. ถ้าไม่เจอตารางสถิติแบบ List ถึงจะค่อยไปงมหาตัวเลขเดี่ยวๆ ในหน้า (Fallback)
+    # 2. ถ้าไม่เจอตารางสถิติแบบ List ถึงจะค่อยไปงมหาตัวเลขเดี่ยวๆ ในหน้า
     if not rows:
         threes, twos = extract_labeled_numbers(text)
         if threes and twos:
@@ -179,7 +179,7 @@ def parse_page(url):
             for i in range(n):
                 rows.append({"3D": threes[i], "2D": twos[i], "date": page_date})
                 
-        # 3. Fallback ลำดับสุดท้าย (Generic Pairs)
+        # 3. Fallback ลำดับสุดท้าย
         if not rows:
             for line in text.splitlines():
                 line = line.strip()
@@ -194,7 +194,6 @@ def parse_page(url):
                         "date": page_date
                     })
 
-    # กรองข้อมูลซ้ำ (ใช้ 3D, 2D และ Date เป็นเงื่อนไข เพื่อไม่ให้ประวัติหาย)
     unique_rows = []
     seen = set()
     for r in rows:
@@ -204,29 +203,50 @@ def parse_page(url):
                 seen.add(k)
                 unique_rows.append(r)
                 
-    return unique_rows, text, soup, page_date
+    return unique_rows, text, soup, page_date, page_title
 
 # ============================================================
-# CRAWLER
+# CRAWLER & STRICT CATEGORY FILTER (🌟 อัปเดตใหม่)
 # ============================================================
+
+def is_page_relevant(category, url, start_url, title, text):
+    """ฟังก์ชันเช็คเนื้อหาว่าตรงกับหวยที่เลือกหรือไม่ ป้องกันข้อมูลหวยอื่นมาปน"""
+    if url == start_url:
+        return True # อนุญาตหน้าเริ่มต้นเสมอ
+        
+    title_lower = title.lower()
+    text_snippet = text[:1000].lower() # ตรวจสอบ 1,000 ตัวอักษรแรก
+    
+    # คำค้นหาสำหรับแต่ละหมวดหมู่
+    keywords = {
+        "หวยไทย": ["ไทย", "รัฐบาล", "lotto", "สลากกินแบ่ง"],
+        "หวยลาว": ["ลาว", "lao", "พัฒนา"],
+        "หวยฮานอย": ["ฮานอย", "hanoi", "นอย"],
+        "หวยธกส": ["ธกส", "ธ.ก.ส", "baac"],
+        "หวยออมสิน": ["ออมสิน", "gsb"],
+        "หวยมาเลย์": ["มาเลย์", "malay", "magnum"],
+        "หวยหุ้นไทยเย็น": ["ไทยเย็น", "หุ้นไทย"],
+        "หวยหุ้นนิเคอิบ่าย": ["นิเคอิ", "nikkei"],
+        "หวยหุ้นฮั่งเส็งบ่าย": ["ฮั่งเส็ง", "hangseng"],
+        "หวยหุ้นจีนบ่าย": ["หุ้นจีน", "จีนบ่าย", "china"],
+    }
+    
+    for k in keywords.get(category, []):
+        if k in title_lower or k in text_snippet:
+            return True
+            
+    return False
 
 def score_link_for_category(url, category):
     s = url.lower()
     score = 0
-    keys = {
-        "หวยไทย": ["ไทย", "รัฐบาล", "lotto"],
-        "หวยลาว": ["ลาว", "lao"],
-        "หวยฮานอย": ["ฮานอย", "hanoi"],
-        "หวยธกส": ["ธกส", "ธ.ก.ส"],
-        "หวยออมสิน": ["ออมสิน"],
-        "หวยมาเลย์": ["มาเลย์", "malay"],
-        "หวยหุ้นไทยเย็น": ["หุ้นไทย", "ไทยเย็น"],
-        "หวยหุ้นนิเคอิบ่าย": ["นิเคอิ", "nikkei"],
-        "หวยหุ้นฮั่งเส็งบ่าย": ["ฮั่งเส็ง", "hangseng"],
-        "หวยหุ้นจีนบ่าย": ["หุ้นจีน", "จีนบ่าย"],
+    # ให้คะแนนลิงก์ที่มี Label ตรงหมวดหมู่เป็นพิเศษ
+    label_keys = {
+        "หวยไทย": ["ไทย"], "หวยลาว": ["ลาว"], "หวยฮานอย": ["ฮานอย"],
+        "หวยธกส": ["ธกส"], "หวยออมสิน": ["ออมสิน"], "หวยมาเลย์": ["มาเลย์"]
     }
-    for k in keys.get(category, []):
-        if k.lower() in s: score += 3
+    for k in label_keys.get(category, []):
+        if k in s: score += 5
     return score
 
 def crawl_blogspot(start_url, category, max_pages=80):
@@ -242,26 +262,29 @@ def crawl_blogspot(start_url, category, max_pages=80):
         visited.add(url)
 
         try:
-            rows, text, soup, page_date = parse_page(url)
+            rows, text, soup, page_date, page_title = parse_page(url)
         except Exception:
             continue
 
-        if rows:
-            for r in rows:
-                collected.append({
-                    "source_url": url,
-                    "published_date": r["date"] or page_date,
-                    "3D": r["3D"],
-                    "2D": r["2D"]
-                })
+        # 🌟 ถ้าระบบตรวจพบว่าเป็นหน้าเพจของหวยอื่น จะข้ามการบันทึกข้อมูลหน้านี้ทันที
+        if is_page_relevant(category, url, start_url, page_title, text):
+            if rows:
+                for r in rows:
+                    collected.append({
+                        "source_url": url,
+                        "published_date": r["date"] or page_date,
+                        "3D": r["3D"],
+                        "2D": r["2D"]
+                    })
 
+        # เก็บลิงก์เพื่อไปค้นหาต่อ
         for link in blog_links(url, soup):
             if link in visited: continue
             low = link.lower()
             if any(x in low for x in ["/p/", "/search", "/feeds/", ".xml", "javascript:", "mailto:"]): continue
             
             score = score_link_for_category(link, category)
-            if ".html" in low: score += 2
+            if ".html" in low: score += 1
             queue.append((link, score))
 
     return pd.DataFrame(collected)
@@ -274,19 +297,15 @@ def clean_history(df):
     if df.empty: return df
     out = df.copy()
 
-    # จัดการรูปแบบตัวเลขก่อน เพื่อให้ Drop Duplicate ถูกต้อง
     out["3D"] = out["3D"].apply(norm3)
     out["2D"] = out["2D"].apply(norm2)
     out = out.dropna(subset=["3D", "2D"])
 
-    # จัดการ Date Format ให้เสถียร
     out["published_date"] = pd.to_datetime(out["published_date"], errors="coerce", utc=True).dt.tz_localize(None)
     out["published_date"] = out["published_date"].fillna(pd.Timestamp('1970-01-01')) 
     
-    # เอา source_url ออกจาก subset เพื่อให้ประวัติใน URL หน้าเดียวกันไม่โดนตัดทิ้ง
     out = out.drop_duplicates(subset=["published_date", "3D", "2D"], keep='last')
     
-    # 🌟 เรียงลำดับวันที่จากเก่าไปใหม่ เพื่อให้ Backtest ตรงความจริง
     out = out.sort_values(by="published_date", ascending=True).reset_index(drop=True)
     out["row_id"] = np.arange(len(out))
     
@@ -330,7 +349,7 @@ def build_next_features(data):
     return pd.DataFrame([r]).fillna(0)
 
 # ============================================================
-# SYMBOLIC ENGINE (CACHE RESOURCE)
+# SYMBOLIC ENGINE
 # ============================================================
 
 class Formula:
@@ -570,11 +589,11 @@ def run_lock_backtest(data, features, formulas, start_index):
 # ============================================================
 
 st.title("🧠 LOTTO AI — AUTO SYMBOLIC EQUATION V4")
-st.caption("Chronological Order Fix • Overfitting Avoidance • Formula Lock • 2-Fail Auto Replacement")
+st.caption("Chronological Order Fix • Strict Category Filter • Formula Lock")
 st.info(f"แหล่งข้อมูล: **{category}**\n\n{BLOG_URLS[category]}")
 
 if st.button("🌐 ดึงข้อมูลจาก Blogspot", type="primary", use_container_width=True):
-    with st.spinner("กำลังอ่าน Blogspot และค้นหาโพสต์ย้อนหลัง..."):
+    with st.spinner("กำลังอ่าน Blogspot และคัดกรองข้อมูลเฉพาะหมวดหมู่นี้..."):
         raw = crawl_blogspot(BLOG_URLS[category], category, max_pages=max_pages)
         data = clean_history(raw)
         
@@ -582,14 +601,14 @@ if st.button("🌐 ดึงข้อมูลจาก Blogspot", type="primary
         st.session_state["blog_category"] = category
         for key in ["formula_lock", "results", "features", "formulas"]:
             st.session_state.pop(key, None)
-    st.success(f"ดึงข้อมูลได้ {len(data):,} รายการ และจัดเรียงงวดตามเวลาแล้ว")
+    st.success(f"ดึงข้อมูลสำเร็จ {len(data):,} งวด (คัดกรองเฉพาะ {category} เรียบร้อย)")
 
 with st.expander("🔗 เพิ่ม URL Blogspot เอง"):
     custom_url = st.text_input("URL ของหน้า Blogspot")
     if st.button("ดึง URL นี้"):
         if custom_url.strip():
             try:
-                raw_rows, _, _, pub_date = parse_page(custom_url.strip())
+                raw_rows, _, _, pub_date, _ = parse_page(custom_url.strip())
                 custom_df = pd.DataFrame([
                     {
                         "source_url": custom_url.strip(), 
@@ -621,10 +640,8 @@ if not data.empty:
     if 'published_date' in disp_data.columns:
         disp_data['Date'] = disp_data['published_date'].dt.strftime('%Y-%m-%d').replace('1970-01-01', 'Unknown')
     
-    # 🌟 เลื่อนคอลัมน์ Date มาไว้ด้านหน้าสุดเพื่อให้ดูง่ายขึ้น
     cols = ['Date', '3D', '2D', 'source_url']
     cols = [c for c in cols if c in disp_data.columns] + [c for c in disp_data.columns if c not in cols]
-    
     st.dataframe(disp_data[cols].head(100), use_container_width=True, hide_index=True)
 
     if len(data) < min_history:
@@ -715,7 +732,6 @@ if "formula_lock" in st.session_state and "formulas" in st.session_state and not
 if "formula_lock" in st.session_state and "formulas" in st.session_state and not data.empty:
     st.markdown("---")
     st.header("🔄 ADAPTIVE LOCK CONTROL")
-    st.caption("ระบบจะเพิ่ม Fail Streak จากผลจริง และเปลี่ยนเฉพาะหลักที่ผิด 2 งวดติด")
     
     if st.button("🔄 ประมวลผลผลล่าสุด + ตรวจ 2 งวดติด", use_container_width=True):
         lock = st.session_state["formula_lock"]
