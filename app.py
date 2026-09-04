@@ -11,7 +11,6 @@ from bs4 import BeautifulSoup
 
 warnings.filterwarnings("ignore")
 
-
 # ============================================================
 # STREAMLIT CONFIG & SIDEBAR SETTINGS
 # ============================================================
@@ -23,10 +22,6 @@ st.set_page_config(
 )
 
 st.sidebar.header("⚙️ SETTINGS")
-
-# ============================================================
-# BLOG URLS
-# ============================================================
 
 BLOG_URLS = {
     "หวยไทย": "https://suksan18190.blogspot.com/2026/07/blog-post_07.html",
@@ -42,14 +37,10 @@ BLOG_URLS = {
 }
 
 category = st.sidebar.selectbox("เลือกหวย", list(BLOG_URLS.keys()))
-
 max_pages = st.sidebar.slider("จำนวนหน้า Blogspot สูงสุด", 1, 150, 50)
 min_history = st.sidebar.slider("จำนวนงวดขั้นต่ำ", 20, 200, 40)
 max_formulas = st.sidebar.slider("จำนวนสูตรสูงสุด", 1000, 12000, 5000, step=500)
-top_candidates = st.sidebar.slider("จำนวนสูตรสำรอง", 5, 50, 30)
-
-# 🛠️ FIX 2: ปรับ LOCK_WINDOW ให้ตั้งค่าได้และเพิ่มค่าเริ่มต้นเป็น 20 เพื่อลด Overfitting
-LOCK_WINDOW = st.sidebar.slider("หน้าต่างประเมินสูตร (Lock Window)", 10, 50, 20, help="เพิ่มจำนวนงวดทดสอบเพื่อลดโอกาสที่สมการจะจับฟลุค (Overfitting)")
+LOCK_WINDOW = st.sidebar.slider("หน้าต่างประเมินสูตร (Lock Window)", 10, 50, 20)
 
 st.sidebar.markdown("---")
 st.sidebar.info(
@@ -67,17 +58,12 @@ st.sidebar.info(
 
 POSITIONS = ["H", "T", "O"]
 FAIL_LIMIT = 2
-
 HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Linux; Android 10) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/125 Safari/537.36"
-    )
+    "User-Agent": "Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125 Safari/537.36"
 }
 
 # ============================================================
-# HTTP
+# HTTP & TEXT CLEANING
 # ============================================================
 
 @st.cache_data(ttl=1800, show_spinner=False)
@@ -86,37 +72,23 @@ def fetch_html(url):
     r.raise_for_status()
     return r.text
 
-# ============================================================
-# CLEAN HTML
-# ============================================================
-
 def clean_text(html):
     soup = BeautifulSoup(html, "html.parser")
     for tag in soup(["script", "style", "noscript"]):
         tag.decompose()
-
-    root = (
-        soup.select_one(".post-body")
-        or soup.select_one(".entry-content")
-        or soup.select_one("article")
-        or soup.body
-    )
-
-    if root is None:
-        return "", soup
-
+    root = soup.select_one(".post-body") or soup.select_one(".entry-content") or soup.select_one("article") or soup.body
+    if root is None: return "", soup
     return root.get_text("\n", strip=True), soup
 
 # ============================================================
-# URL
+# URL HELPERS
 # ============================================================
 
 def normalize_url(base, href):
     try:
         u = urljoin(base, href)
         p = urlparse(u)
-        if p.scheme not in ("http", "https"):
-            return None
+        if p.scheme not in ("http", "https"): return None
         return u.split("#")[0]
     except Exception:
         return None
@@ -128,23 +100,20 @@ def blog_links(url, soup):
     out = []
     for a in soup.find_all("a", href=True):
         u = normalize_url(url, a["href"])
-        if u and same_blog(url, u):
-            out.append(u)
+        if u and same_blog(url, u): out.append(u)
     return list(dict.fromkeys(out))
 
 # ============================================================
-# NUMBER EXTRACTION & NORMALIZATION
+# NUMBER EXTRACTION
 # ============================================================
 
 def norm3(x):
     s = re.sub(r"\D", "", str(x))
-    if not s: return None
-    return s.zfill(3)[-3:]
+    return s.zfill(3)[-3:] if s else None
 
 def norm2(x):
     s = re.sub(r"\D", "", str(x))
-    if not s: return None
-    return s.zfill(2)[-2:]
+    return s.zfill(2)[-2:] if s else None
 
 def extract_labeled_numbers(text):
     t = text.replace("\u200b", " ")
@@ -166,52 +135,67 @@ def extract_labeled_numbers(text):
     two = [norm2(x) for x in two if norm2(x)]
     return list(dict.fromkeys(three)), list(dict.fromkeys(two))
 
-def extract_generic_pairs(text):
-    rows = []
-    for line in text.splitlines():
-        line = line.strip()
-        if not line: continue
-        nums = re.findall(r"(?<!\d)\d{1,3}(?!\d)", line)
-        if not nums: continue
-        threes = [x for x in nums if len(x) == 3]
-        twos = [x for x in nums if len(x) <= 2]
-        if threes and twos:
-            for a in threes[:3]:
-                b = twos[-1]
-                rows.append((norm3(a), norm2(b)))
-    return rows
+# ============================================================
+# DATE & PAGE PARSING (FIXED)
+# ============================================================
 
-# ============================================================
-# PARSE PAGE (ADDED DATE EXTRACTION)
-# ============================================================
+def get_page_date(soup, url):
+    meta = soup.find("meta", itemprop="datePublished")
+    if meta and meta.get("content"): return meta["content"]
+    
+    time_tag = soup.find(["time", "abbr"], class_="published")
+    if time_tag: return time_tag.get("datetime") or time_tag.get("title") or time_tag.get_text()
+        
+    dh = soup.find(class_=re.compile("date-header", re.I))
+    if dh: return dh.get_text(strip=True)
+        
+    m = re.search(r"/(\d{4})/(\d{2})/", url)
+    if m: return f"{m.group(1)}-{m.group(2)}-01"
+        
+    return None
 
 def parse_page(url):
     html = fetch_html(url)
     text, soup = clean_text(html)
-
-    # 🛠️ FIX 1 (A): ดึงวันที่จาก Meta Data เพื่อใช้เรียงลำดับเวลา
-    pub_date = None
-    meta_date = soup.find("meta", itemprop="datePublished")
-    if meta_date and meta_date.get("content"):
-        pub_date = meta_date["content"]
-    else:
-        # หากไม่มี itemprop ลองหาจาก tag abbr
-        abbr_date = soup.find("abbr", class_="published")
-        if abbr_date and abbr_date.get("title"):
-            pub_date = abbr_date["title"]
-
-    threes, twos = extract_labeled_numbers(text)
+    page_date = get_page_date(soup, url)
     rows = []
+    
+    threes, twos = extract_labeled_numbers(text)
     if threes and twos:
         n = min(len(threes), len(twos))
         for i in range(n):
-            rows.append((threes[i], twos[i]))
-
+            rows.append({"3D": threes[i], "2D": twos[i], "date": page_date})
+            
     if not rows:
-        rows = extract_generic_pairs(text)
+        for line in text.splitlines():
+            line = line.strip()
+            if not line: continue
+            
+            d_match = re.search(r"(\d{4}-\d{2}-\d{2}|\d{2}/\d{2}/\d{2,4})", line)
+            line_date = d_match.group(1) if d_match else page_date
+            clean_line = line.replace(d_match.group(1), "") if d_match else line
+            
+            nums = re.findall(r"(?<!\d)\d{1,3}(?!\d)", clean_line)
+            threes_list = [x for x in nums if len(x) == 3]
+            twos_list = [x for x in nums if len(x) <= 2]
+            
+            if threes_list and twos_list:
+                rows.append({
+                    "3D": norm3(threes_list[0]),
+                    "2D": norm2(twos_list[-1]),
+                    "date": line_date
+                })
 
-    rows = list(dict.fromkeys((a, b) for a, b in rows if a and b))
-    return rows, text, soup, pub_date
+    unique_rows = []
+    seen = set()
+    for r in rows:
+        if r["3D"] and r["2D"]:
+            k = (r["3D"], r["2D"])
+            if k not in seen:
+                seen.add(k)
+                unique_rows.append(r)
+                
+    return unique_rows, text, soup, page_date
 
 # ============================================================
 # CRAWLER
@@ -233,8 +217,7 @@ def score_link_for_category(url, category):
         "หวยหุ้นจีนบ่าย": ["หุ้นจีน", "จีนบ่าย"],
     }
     for k in keys.get(category, []):
-        if k.lower() in s:
-            score += 3
+        if k.lower() in s: score += 3
     return score
 
 def crawl_blogspot(start_url, category, max_pages=80):
@@ -250,24 +233,23 @@ def crawl_blogspot(start_url, category, max_pages=80):
         visited.add(url)
 
         try:
-            rows, text, soup, pub_date = parse_page(url)
+            rows, text, soup, page_date = parse_page(url)
         except Exception:
             continue
 
         if rows:
-            for a, b in rows:
+            for r in rows:
                 collected.append({
                     "source_url": url,
-                    "published_date": pub_date,
-                    "3D": a,
-                    "2D": b
+                    "published_date": r["date"] or page_date,
+                    "3D": r["3D"],
+                    "2D": r["2D"]
                 })
 
         for link in blog_links(url, soup):
             if link in visited: continue
             low = link.lower()
-            if any(x in low for x in ["/p/", "/search", "/feeds/", ".xml", "javascript:", "mailto:"]):
-                continue
+            if any(x in low for x in ["/p/", "/search", "/feeds/", ".xml", "javascript:", "mailto:"]): continue
             
             score = score_link_for_category(link, category)
             if ".html" in low: score += 2
@@ -276,35 +258,26 @@ def crawl_blogspot(start_url, category, max_pages=80):
     return pd.DataFrame(collected)
 
 # ============================================================
-# CLEAN HISTORY (ADDED CHRONOLOGICAL SORTING)
+# DATA CLEANING & FEATURES
 # ============================================================
 
 def clean_history(df):
     if df.empty: return df
     out = df.copy()
 
-    # 🛠️ FIX 1 (B): จัดการและเรียงลำดับเวลาให้เป็น Chronological จริงๆ
-    out["published_date"] = pd.to_datetime(out["published_date"], errors="coerce")
-    # เติมวันที่กรณีไม่มี เพื่อไม่ให้ Error ตอน Sort (อาจดึงข้อมูลจาก URL ชั่วคราว)
+    out["published_date"] = pd.to_datetime(out["published_date"], errors="coerce", utc=True).dt.tz_localize(None)
     out["published_date"] = out["published_date"].fillna(pd.Timestamp('1970-01-01')) 
     
-    # Sort เรียงจากงวดเก่าสุด ไป งวดใหม่ล่าสุด (สำคัญมากสำหรับ Backtest)
     out = out.sort_values(by="published_date", ascending=True)
 
     out["3D"] = out["3D"].apply(norm3)
     out["2D"] = out["2D"].apply(norm2)
     out = out.dropna(subset=["3D", "2D"])
     
-    out = out.drop_duplicates(subset=["source_url", "3D", "2D"], keep='last')
-    out = out.reset_index(drop=True)
+    out = out.drop_duplicates(subset=["source_url", "3D", "2D"], keep='last').reset_index(drop=True)
     out["row_id"] = np.arange(len(out))
     
-    # เอาคอลัมน์ published_date ออกถ้าไม่จำเป็นต้องโชว์ (หรือเก็บไว้เช็คได้)
     return out
-
-# ============================================================
-# FEATURES ENGINEERING
-# ============================================================
 
 def make_raw(row):
     a = str(row["3D"]).zfill(3)
@@ -312,10 +285,8 @@ def make_raw(row):
     H, T, O = map(int, a)
     T2, O2 = map(int, b)
     return {
-        "H": H, "T": T, "O": O,
-        "T2": T2, "O2": O2,
-        "S3": H + T + O,
-        "S2": T2 + O2,
+        "H": H, "T": T, "O": O, "T2": T2, "O2": O2,
+        "S3": H + T + O, "S2": T2 + O2,
         "HT": abs(H - T), "TO": abs(T - O), "HO": abs(H - O),
         "HT2": abs(H - T2), "HO2": abs(H - O2),
         "TT2": abs(T - T2), "TO2": abs(T - O2),
@@ -331,8 +302,7 @@ def build_features(data):
             j = i - lag
             if j >= 0:
                 vals = make_raw(data.iloc[j])
-                for k, v in vals.items():
-                    r[f"{k}_L{lag}"] = v
+                for k, v in vals.items(): r[f"{k}_L{lag}"] = v
         rows.append(r)
     return pd.DataFrame(rows).fillna(0)
 
@@ -343,12 +313,11 @@ def build_next_features(data):
         j = i - lag
         if j >= 0:
             vals = make_raw(data.iloc[j])
-            for k, v in vals.items():
-                r[f"{k}_L{lag}"] = v
+            for k, v in vals.items(): r[f"{k}_L{lag}"] = v
     return pd.DataFrame([r]).fillna(0)
 
 # ============================================================
-# FORMULA CLASS
+# SYMBOLIC ENGINE (FIXED CACHE)
 # ============================================================
 
 class Formula:
@@ -364,21 +333,10 @@ class Formula:
         except Exception:
             return None
 
-# ============================================================
-# GENERATE SYMBOLIC FORMULAS (ADDED CACHE)
-# ============================================================
-
-# 🛠️ FIX 3: เปลี่ยนมาใช้ @st.cache_resource เนื่องจากภายในมี lambda function
 @st.cache_resource(show_spinner=False)
 def generate_formulas(max_formulas=5000):
     formulas = []
-    # ...
-
-    base = [
-        f"{x}_L{lag}"
-        for lag in [1, 2, 3, 5]
-        for x in ["H", "T", "O", "T2", "O2", "S3", "S2", "HT", "TO", "HO", "HT2", "HO2", "TT2", "TO2", "R3", "R2", "DS3"]
-    ]
+    base = [f"{x}_L{lag}" for lag in [1, 2, 3, 5] for x in ["H", "T", "O", "T2", "O2", "S3", "S2", "HT", "TO", "HO", "HT2", "HO2", "TT2", "TO2", "R3", "R2", "DS3"]]
 
     for a in base:
         formulas.append(Formula(a, lambda r, a=a: r.get(a, 0)))
@@ -394,8 +352,7 @@ def generate_formulas(max_formulas=5000):
             Formula(f"MOD10({a}*{b})", lambda r, a=a, b=b: (r.get(a, 0) * r.get(b, 0)) % 10),
             Formula(f"({a}/{b})", lambda r, a=a, b=b: None if r.get(b, 0) == 0 else r.get(a, 0) / r.get(b, 0)),
         ])
-        if len(formulas) >= max_formulas:
-            return formulas[:max_formulas]
+        if len(formulas) >= max_formulas: return formulas[:max_formulas]
 
     important = [x for x in base if x.split("_")[0] in ["H", "T", "O", "T2", "O2", "S3", "S2", "HT", "TO", "HO"]]
     for a, b, c in itertools.combinations(important, 3):
@@ -409,10 +366,6 @@ def generate_formulas(max_formulas=5000):
         if len(formulas) >= max_formulas: break
 
     return formulas[:max_formulas]
-
-# ============================================================
-# PREDICTION & EVALUATION LOGIC
-# ============================================================
 
 def target_digit(data, i, position):
     s = str(data.iloc[i]["3D"]).zfill(3)
@@ -496,10 +449,8 @@ def check_locked_draw(lock, formulas, features, data, actual_index):
 def update_lock_after_draw(lock, formulas, features, data, actual_index):
     result = check_locked_draw(lock, formulas, features, data, actual_index)
     for pos, info in result.items():
-        if info["hit"]:
-            lock[pos]["fail_streak"] = 0
-        else:
-            lock[pos]["fail_streak"] += 1
+        if info["hit"]: lock[pos]["fail_streak"] = 0
+        else: lock[pos]["fail_streak"] += 1
             
         lock[pos]["history"].append({
             "index": actual_index, "prediction": info["prediction"], 
@@ -538,8 +489,7 @@ def run_lock_backtest(data, features, formulas, start_index):
     history_rows = []
     replacement_log = []
     
-    initial_end = start_index
-    candidates_by_pos = {pos: discover_best_10(data, features, formulas, pos, end_index=initial_end, top_candidates=30) for pos in POSITIONS}
+    candidates_by_pos = {pos: discover_best_10(data, features, formulas, pos, end_index=start_index, top_candidates=30) for pos in POSITIONS}
 
     for pos in POSITIONS:
         candidates = candidates_by_pos[pos]
@@ -572,10 +522,8 @@ def run_lock_backtest(data, features, formulas, start_index):
             draw_result[f"{pos}_Actual"] = actual
             draw_result[f"{pos}_Hit"] = hit
 
-            if hit:
-                working_lock[pos]["fail_streak"] = 0
-            else:
-                working_lock[pos]["fail_streak"] += 1
+            if hit: working_lock[pos]["fail_streak"] = 0
+            else: working_lock[pos]["fail_streak"] += 1
 
         for pos in POSITIONS:
             if pos in working_lock:
@@ -605,7 +553,7 @@ def run_lock_backtest(data, features, formulas, start_index):
     return pd.DataFrame(history_rows), pd.DataFrame(replacement_log)
 
 # ============================================================
-# MAIN UI
+# UI RENDER
 # ============================================================
 
 st.title("🧠 LOTTO AI — AUTO SYMBOLIC EQUATION V4")
@@ -630,8 +578,13 @@ with st.expander("🔗 เพิ่ม URL Blogspot เอง"):
             try:
                 raw_rows, _, _, pub_date = parse_page(custom_url.strip())
                 custom_df = pd.DataFrame([
-                    {"source_url": custom_url.strip(), "published_date": pub_date, "3D": a, "2D": b}
-                    for a, b in raw_rows
+                    {
+                        "source_url": custom_url.strip(), 
+                        "published_date": r["date"] or pub_date, 
+                        "3D": r["3D"], 
+                        "2D": r["2D"]
+                    }
+                    for r in raw_rows
                 ])
                 st.session_state["custom_data"] = clean_history(custom_df)
                 st.success(f"พบ {len(custom_df)} รายการ")
@@ -646,12 +599,11 @@ if not custom_data.empty:
     if data.empty: data = custom_data.copy()
     else:
         data = pd.concat([data, custom_data], ignore_index=True)
-        data = data.sort_values(by="published_date", ascending=True) # Sort again after merge
+        data = data.sort_values(by="published_date", ascending=True)
         data = data.drop_duplicates(subset=["source_url", "3D", "2D"], keep='last').reset_index(drop=True)
 
 if not data.empty:
     st.subheader(f"📊 ข้อมูลที่ดึงได้ {len(data):,} รายการ (เรียงตามเวลาแล้ว)")
-    # Format Date column for display
     disp_data = data.copy()
     if 'published_date' in disp_data.columns:
         disp_data['Date'] = disp_data['published_date'].dt.strftime('%Y-%m-%d').replace('1970-01-01', 'Unknown')
