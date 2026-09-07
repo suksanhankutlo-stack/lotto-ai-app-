@@ -6,5 +6,7 @@ xgboost
 beautifulsoup4
 requests
 pymongo[srv]
+dnspython
+
 
 
