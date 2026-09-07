@@ -9,23 +9,22 @@ from xgboost import XGBClassifier
 from sklearn.naive_bayes import GaussianNB
 import warnings
 from pymongo import MongoClient
-from pymongo.server_api import ServerApi # เพิ่มตัวนี้
-import certifi # เพิ่มตัวนี้
+from pymongo.server_api import ServerApi
+import certifi 
 
 warnings.filterwarnings('ignore')
 
+# -----------------------------------------
+# การตั้งค่า MongoDB
+# -----------------------------------------
 MONGO_URI = "mongodb+srv://admin:%40Sscg789@cluster0.1o86fzh.mongodb.net/?appName=Cluster0"
 
 @st.cache_resource
 def init_mongo_connection():
     """เชื่อมต่อกับ MongoDB พร้อมตั้งค่า SSL Certificate สำหรับ Streamlit Cloud"""
-    # เพิ่ม tlsCAFile=certifi.where() เพื่อแก้ปัญหาเชื่อมต่อบน Cloud
     client = MongoClient(MONGO_URI, server_api=ServerApi('1'), tlsCAFile=certifi.where())
     db = client["lottery_ai_database"]
     return db
-
-# (โค้ดส่วนที่เหลือด้านล่างใช้เหมือนเดิมได้เลยครับ)
-
 
 # -----------------------------------------
 # ฐานข้อมูลลิงก์หวย
@@ -87,25 +86,24 @@ def fetch_and_save_to_mongo(lottery_type, url, db):
         df = pd.DataFrame(data)
         
         # --- บันทึกลง MongoDB ---
-        collection = db[lottery_type] # สร้าง Collection ตามชื่อหวย เช่น "หวยลาว"
-        collection.delete_many({}) # ลบข้อมูลเก่าทิ้งก่อน
-        collection.insert_many(data) # ใส่ข้อมูลใหม่ที่อัปเดตแล้วลงไป
+        collection = db[lottery_type]
+        collection.delete_many({}) 
+        collection.insert_many(data) 
         # ------------------------
         
         st.success(f"✅ ดึงข้อมูลเว็บและบันทึกลง MongoDB สำเร็จ! ({len(df)} งวด)")
         return df
         
     except Exception as e:
-        st.error(f"❌ เกิดข้อผิดพลาด: {e}")
+        st.error(f"❌ เกิดข้อผิดพลาดในการดึงข้อมูล: {e}")
         return None
 
 def load_from_mongo(lottery_type, db):
     """โหลดข้อมูลจาก MongoDB ขึ้นมาเป็น DataFrame"""
     collection = db[lottery_type]
-    # ดึงข้อมูลทั้งหมด โดยไม่เอาคอลัมน์ _id ของ Mongo
     data = list(collection.find({}, {'_id': 0})) 
     if data:
-        st.info("⚡ โหลดข้อมูลผลย้อนหลังจากฐานข้อมูล MongoDB (เร็วขึ้น)")
+        st.info("⚡ โหลดข้อมูลผลย้อนหลังจากฐานข้อมูล MongoDB")
         return pd.DataFrame(data)
     else:
         return None
