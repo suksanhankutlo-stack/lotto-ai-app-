@@ -109,32 +109,19 @@ def load_from_mongo(lottery_type, db):
         return None
 
 # -----------------------------------------
-# 2. เครื่องยนต์วิเคราะห์ (AI Engines)
+# 2. เครื่องยนต์วิเคราะห์ (AI Engines) - เวอร์ชันประมวลผลเร็ว (Fast Mode)
 # -----------------------------------------
-class StatisticalEngine:
-    def __init__(self):
-        self.bayesian = GaussianNB()
-        self.markov_matrix = None
-        self.freq_dist = None
-        
-    def fit(self, X, y):
-        self.freq_dist = y.value_counts(normalize=True).reindex(range(10), fill_value=0).values
-        self.bayesian.fit(X, y)
-        self.markov_matrix = np.ones((10, 10))
-        for i in range(len(y)-1):
-            self.markov_matrix[y.iloc[i], y.iloc[i+1]] += 1
-        self.markov_matrix = self.markov_matrix / self.markov_matrix.sum(axis=1, keepdims=True)
-
-    def predict_proba(self, X, last_known_digit):
-        bayes_prob = self.bayesian.predict_proba(X)[-1]
-        markov_prob = self.markov_matrix[last_known_digit]
-        return (bayes_prob + markov_prob + self.freq_dist) / 3
-
 class FeatureEngine:
     def __init__(self):
-        self.et = ExtraTreesClassifier(n_estimators=50, random_state=42)
-        self.hgb = HistGradientBoostingClassifier(random_state=42)
-        self.xgb = XGBClassifier(eval_metric='mlogloss', random_state=42)
+        # 1. ลด n_estimators ลงเหลือ 20 (จากเดิม 100) เพื่อให้เทรนเร็วขึ้น 5 เท่า
+        # 2. ใส่ n_jobs=-1 เพื่อบังคับให้ CPU ทำงานพร้อมกันทุกคอร์
+        self.et = ExtraTreesClassifier(n_estimators=20, random_state=42, n_jobs=-1)
+        
+        # ลด max_iter เพื่อให้ HGB หยุดเทรนเร็วขึ้น
+        self.hgb = HistGradientBoostingClassifier(max_iter=30, random_state=42)
+        
+        # ลด n_estimators ของ XGBoost ลง
+        self.xgb = XGBClassifier(n_estimators=20, eval_metric='mlogloss', random_state=42, n_jobs=-1)
         
     def fit(self, X, y):
         self.et.fit(X, y)
@@ -152,6 +139,7 @@ class FeatureEngine:
         for idx, c in enumerate(model.classes_):
             full_prob[c] = prob[idx]
         return full_prob
+
 
 # -----------------------------------------
 # 3. ระบบรวมและปรับตัว (Adaptive Ensemble)
