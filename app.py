@@ -15,7 +15,7 @@ import certifi
 warnings.filterwarnings('ignore')
 
 # -----------------------------------------
-# การตั้งค่า MongoDB
+# การตั้งค่า MongoDB (ลิงก์ยิงตรง)
 # -----------------------------------------
 MONGO_URI = "mongodb://admin:%40Sscg789@ac-wgijeal-shard-00-00.lo86fzh.mongodb.net:27017,ac-wgijeal-shard-00-01.lo86fzh.mongodb.net:27017,ac-wgijeal-shard-00-02.lo86fzh.mongodb.net:27017/?ssl=true&replicaSet=atlas-qdwhgz-shard-0&authSource=admin&appName=Cluster0"
 
@@ -56,7 +56,6 @@ def generate_mock_data(n_samples=200):
     return pd.DataFrame(data)
 
 def fetch_and_save_to_mongo(lottery_type, url, db):
-    """ฟังก์ชันดึงเว็บ และบันทึกลง MongoDB"""
     try:
         response = requests.get(url)
         response.raise_for_status() 
@@ -84,13 +83,9 @@ def fetch_and_save_to_mongo(lottery_type, url, db):
             })
             
         df = pd.DataFrame(data)
-        
-        # --- บันทึกลง MongoDB ---
         collection = db[lottery_type]
         collection.delete_many({}) 
         collection.insert_many(data) 
-        # ------------------------
-        
         st.success(f"✅ ดึงข้อมูลเว็บและบันทึกลง MongoDB สำเร็จ! ({len(df)} งวด)")
         return df
         
@@ -99,7 +94,6 @@ def fetch_and_save_to_mongo(lottery_type, url, db):
         return None
 
 def load_from_mongo(lottery_type, db):
-    """โหลดข้อมูลจาก MongoDB ขึ้นมาเป็น DataFrame"""
     collection = db[lottery_type]
     data = list(collection.find({}, {'_id': 0})) 
     if data:
@@ -109,18 +103,32 @@ def load_from_mongo(lottery_type, db):
         return None
 
 # -----------------------------------------
-# 2. เครื่องยนต์วิเคราะห์ (AI Engines) - เวอร์ชันประมวลผลเร็ว (Fast Mode)
+# 2. เครื่องยนต์วิเคราะห์ (AI Engines)
 # -----------------------------------------
+class StatisticalEngine:
+    def __init__(self):
+        self.bayesian = GaussianNB()
+        self.markov_matrix = None
+        self.freq_dist = None
+        
+    def fit(self, X, y):
+        self.freq_dist = y.value_counts(normalize=True).reindex(range(10), fill_value=0).values
+        self.bayesian.fit(X, y)
+        self.markov_matrix = np.ones((10, 10))
+        for i in range(len(y)-1):
+            self.markov_matrix[y.iloc[i], y.iloc[i+1]] += 1
+        self.markov_matrix = self.markov_matrix / self.markov_matrix.sum(axis=1, keepdims=True)
+
+    def predict_proba(self, X, last_known_digit):
+        bayes_prob = self.bayesian.predict_proba(X)[-1]
+        markov_prob = self.markov_matrix[last_known_digit]
+        return (bayes_prob + markov_prob + self.freq_dist) / 3
+
 class FeatureEngine:
     def __init__(self):
-        # 1. ลด n_estimators ลงเหลือ 20 (จากเดิม 100) เพื่อให้เทรนเร็วขึ้น 5 เท่า
-        # 2. ใส่ n_jobs=-1 เพื่อบังคับให้ CPU ทำงานพร้อมกันทุกคอร์
+        # โหมด Fast: ลด n_estimators และ max_iter พร้อมสั่ง n_jobs=-1 ให้ CPU วิ่งเต็มสปีด
         self.et = ExtraTreesClassifier(n_estimators=20, random_state=42, n_jobs=-1)
-        
-        # ลด max_iter เพื่อให้ HGB หยุดเทรนเร็วขึ้น
         self.hgb = HistGradientBoostingClassifier(max_iter=30, random_state=42)
-        
-        # ลด n_estimators ของ XGBoost ลง
         self.xgb = XGBClassifier(n_estimators=20, eval_metric='mlogloss', random_state=42, n_jobs=-1)
         
     def fit(self, X, y):
@@ -139,7 +147,6 @@ class FeatureEngine:
         for idx, c in enumerate(model.classes_):
             full_prob[c] = prob[idx]
         return full_prob
-
 
 # -----------------------------------------
 # 3. ระบบรวมและปรับตัว (Adaptive Ensemble)
@@ -189,10 +196,8 @@ def main():
     st.title("🎲 Advanced AI Lottery Predictor")
     st.markdown("ระบบทำนายด้วยสถาปัตยกรรม **Ensemble AI & Adaptive Self-Correction**")
     
-    # 🔌 เชื่อมต่อ Database
     db = init_mongo_connection()
     
-    # -------- เมนูด้านซ้าย (Sidebar) --------
     st.sidebar.header("⚙️ 1. เลือกหวยที่ต้องการ")
     lottery_type = st.sidebar.selectbox("ประเภทหวย", list(LOTTERY_SOURCES.keys()))
     source_url = LOTTERY_SOURCES[lottery_type]
@@ -204,7 +209,6 @@ def main():
     ])
     
     df = None
-    # -------- จัดการโหลดข้อมูล --------
     if data_option == "🟢 โหลดจาก Database (MongoDB)":
         df = load_from_mongo(lottery_type, db)
         if df is None:
@@ -215,11 +219,9 @@ def main():
         with st.spinner("กำลังดึงข้อมูลและบันทึกลง Database..."):
             df = fetch_and_save_to_mongo(lottery_type, source_url, db)
             
-    # กรณีดึงล้มเหลว
     if df is None:
         df = generate_mock_data(200)
             
-    # -------- แสดงหน้าจอหลัก --------
     st.subheader(f"📊 ข้อมูลผลย้อนหลัง: **{lottery_type}**")
     st.dataframe(df.tail(10)) 
     
@@ -235,7 +237,7 @@ def main():
             if digit not in df.columns: continue
             
             with tabs[idx]:
-                with st.spinner(f"AI กำลังคำนวณโมเดลสำหรับหลัก {digit}..."):
+                with st.spinner(f"AI กำลังคำนวณโมเดลสำหรับหลัก {digit} (Fast Mode)..."):
                     target_series = df[digit].values
                     X, y = create_features(target_series, lag=5)
                     
@@ -244,11 +246,9 @@ def main():
                         continue
                         
                     last_known = int(target_series[-1])
-                    
                     X_train, y_train = X.iloc[:-10], y.iloc[:-10]
                     X_backtest, y_backtest = X.iloc[-10:], y.iloc[-10:]
                     
-                    # AI Engines
                     stat_engine = StatisticalEngine()
                     stat_engine.fit(X_train, y_train)
                     prob_stat = stat_engine.predict_proba(X, last_known)
