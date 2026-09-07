@@ -1,5 +1,11 @@
 # ============================================================
-# LOTTO AI - ADAPTIVE EQUATION LOCK V2.1 (MONGODB + BACKFILL HISTORY)
+# LOTTO AI - ADAPTIVE EQUATION LOCK V3.0 (SUPER AI + MOMENTUM SCORING)
+# ============================================================
+# FEATURES
+# 1. คลังสมการขนาดใหญ่ (รวมสูตรสถิติ, ผลต่าง, ค่าเฉลี่ย, ยกกำลัง)
+# 2. ระบบให้คะแนนแบบใหม่ (Streak Bonus) ดันสูตรที่เพิ่งเข้าเป้าให้เป็นอันดับ 1
+# 3. จำลองประวัติย้อนหลังอัตโนมัติ (Backfill 10 งวด)
+# 4. บันทึก State ลง MongoDB 
 # ============================================================
 
 import os
@@ -25,10 +31,10 @@ warnings.filterwarnings("ignore")
 # ============================================================
 # CONFIG
 # ============================================================
-APP_TITLE = "LOTTO AI - ADAPTIVE EQUATION LOCK"
+APP_TITLE = "LOTTO AI - ADAPTIVE EQUATION LOCK V3"
 HISTORY_FILE = "lotto_adaptive_history.json" 
-LOOKBACK = 30 # ดึงข้อมูลย้อนหลัง 30 งวด เพื่อใช้เป็น Data ให้ระบบจำลองประวัติ 10 งวด
-HISTORY_SHOW = 10 # จำนวนงวดที่ต้องการให้แสดงในประวัติ
+LOOKBACK = 30 # จำนวนงวดที่ดึงมาคำนวณตั้งต้น
+HISTORY_SHOW = 10 # จำนวนประวัติย้อนหลังที่แสดงผล
 REQUEST_TIMEOUT = 20
 HEADERS = {
     "User-Agent": (
@@ -68,12 +74,11 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ============================================================
-# DATABASE SETUP
+# DATABASE SETUP (MONGODB)
 # ============================================================
 @st.cache_resource
 def init_mongo_connection():
     if MONGO_AVAILABLE:
-        # ใส่ URI ลงตรงนี้ได้เลยตามที่คุณใช้งานอยู่
         URI = "mongodb+srv://admin:%40Sscg789@cluster0.1o86fzh.mongodb.net/?appName=Cluster0"
         return MongoClient(URI)
     return None
@@ -135,7 +140,6 @@ def extract_post_text(html):
     
     containers = []
     selectors = ["div.post-body", "div.post-body.entry-content", "div.entry-content", "article", "main"]
-    
     for selector in selectors:
         found = soup.select(selector)
         for x in found:
@@ -212,50 +216,101 @@ def result_to_digits(record):
     return {}
 
 # ============================================================
-# FORMULA ENGINE
+# SUPER FORMULA ENGINE (V3)
 # ============================================================
 class FormulaEngine:
     def __init__(self):
         self.formulas = [
+            # 1. กลุ่มดึงค่าตรงๆ
             ("L1", lambda d: d[-1]), ("L2", lambda d: d[-2]), ("L3", lambda d: d[-3]),
             ("L4", lambda d: d[-4]), ("L5", lambda d: d[-5]),
+            
+            # 2. กลุ่มบวก/ลบ
             ("L1+L2", lambda d: d[-1] + d[-2]), ("L1+L3", lambda d: d[-1] + d[-3]),
             ("L2+L3", lambda d: d[-2] + d[-3]), ("L3+L4", lambda d: d[-3] + d[-4]),
             ("L1-L2", lambda d: d[-1] - d[-2]), ("L2-L3", lambda d: d[-2] - d[-3]),
+            
+            # 3. กลุ่มผลต่างสัมบูรณ์ (หาความห่างของตัวเลข)
+            ("|L1-L2|", lambda d: abs(d[-1] - d[-2])),
+            ("|L1-L3|", lambda d: abs(d[-1] - d[-3])),
+            ("|L2-L3|", lambda d: abs(d[-2] - d[-3])),
+            
+            # 4. กลุ่มคูณ/ถ่วงน้ำหนัก
             ("L1*L2", lambda d: d[-1] * d[-2]), ("L2*L3", lambda d: d[-2] * d[-3]),
             ("2L1+L2", lambda d: 2*d[-1] + d[-2]), ("L1+2L2", lambda d: d[-1] + 2*d[-2]),
-            ("L1+1", lambda d: d[-1] + 1), ("L1+2", lambda d: d[-1] + 2), ("L1+3", lambda d: d[-1] + 3),
+            ("3L1", lambda d: 3*d[-1]), ("4L1", lambda d: 4*d[-1]), ("5L1", lambda d: 5*d[-1]),
+            
+            # 5. กลุ่มบวกค่าคงที่ (เดินหน้า-ถอยหลัง)
+            ("L1+1", lambda d: d[-1] + 1), ("L1+2", lambda d: d[-1] + 2), 
+            ("L1+3", lambda d: d[-1] + 3), ("L1+4", lambda d: d[-1] + 4),
+            ("L1+5", lambda d: d[-1] + 5), ("L1+7", lambda d: d[-1] + 7),
             ("L1-1", lambda d: d[-1] - 1), ("L1-2", lambda d: d[-1] - 2),
+            ("L1-3", lambda d: d[-1] - 3),
+            
+            # 6. กลุ่มสถิติ (Max, Min, Avg)
+            ("MAX(L1,L2)", lambda d: max(d[-1], d[-2])),
+            ("MIN(L1,L2)", lambda d: min(d[-1], d[-2])),
+            ("AVG(L1,L2)", lambda d: (d[-1] + d[-2]) // 2),
+            
+            # 7. กลุ่ม 3 งวด
             ("L1+L2+L3", lambda d: d[-1] + d[-2] + d[-3]),
             ("L1-L2+L3", lambda d: d[-1] - d[-2] + d[-3]),
+            
+            # 8. กลุ่มยกกำลัง (Pattern สวิง)
+            ("L1^2", lambda d: d[-1] ** 2),
+            ("L1^2+L2", lambda d: (d[-1] ** 2) + d[-2]),
         ]
 
     def predict(self, formula_name, history):
         for name, fn in self.formulas:
             if name == formula_name:
-                try: return int(fn(history)) % 10
-                except: return 0
+                try: 
+                    return int(fn(history)) % 10
+                except: 
+                    return 0
         return 0
 
 def backtest_formula(formula_name, values):
     engine = FormulaEngine()
     if len(values) < 6:
-        return {"formula": formula_name, "hits": 0, "tests": 0, "rate": 0.0}
-    hits, tests = 0, 0
+        return {"formula": formula_name, "hits": 0, "tests": 0, "rate": 0.0, "score": 0.0}
+        
+    hits, tests, recent_streak = 0, 0, 0
+    
     for i in range(5, len(values)):
         history = values[:i]
         actual = values[i]
         pred = engine.predict(formula_name, history)
-        if pred == actual: hits += 1
+        
+        if pred == actual: 
+            hits += 1
+            recent_streak += 1  # นับคอมโบต่อเนื่อง
+        else:
+            recent_streak = 0   # หลุดปุ๊บ รีเซ็ตคอมโบทันที
+            
         tests += 1
-    return {"formula": formula_name, "hits": hits, "tests": tests, "rate": hits / tests if tests else 0}
+        
+    rate = hits / tests if tests else 0
+    
+    # 🧠 ระบบคิดคะแนนแบบใหม่ (AI Scoring):
+    # - เอาเปอร์เซ็นต์ความแม่นยำ * 100
+    # - บวกโบนัส "สูตรกำลังเดิน" เข้าไปอย่างหนัก (คูณ 15)
+    score = (rate * 100) + (hits * 1.5) + (recent_streak * 15)
+    
+    return {
+        "formula": formula_name, 
+        "hits": hits, 
+        "tests": tests, 
+        "rate": rate, 
+        "score": score
+    }
 
 def rank_formulas(values):
     engine = FormulaEngine()
     results = [backtest_formula(name, values) for name, _ in engine.formulas]
     df = pd.DataFrame(results)
+    
     if df.empty: return df
-    df["score"] = (df["rate"] * 100) + (df["hits"] * 0.5)
     df = df.sort_values(["score", "rate", "hits"], ascending=False).reset_index(drop=True)
     return df.head(3)
 
@@ -359,7 +414,6 @@ def process_lottery(lottery_name, records, global_state):
                 
             history_values = values[:i]
             
-            # หากเพิ่งรันครั้งแรก ให้คำนวณ Top3 ล่าสุด ณ เวลานั้น
             if not state.get("top3"):
                 temp_state = refresh_position(history_values, None)
                 state["formula"] = temp_state["formula"]
@@ -430,15 +484,22 @@ st.sidebar.title("⚙️ ตั้งค่าระบบ")
 selected_lotto = st.sidebar.selectbox("เลือกหวย", list(LOTTO_URLS.keys()))
 st.sidebar.markdown(f"**ข้อมูลย้อนหลัง (สำหรับจำลอง):** {LOOKBACK} งวด\n\n**แสดงประวัติ:** {HISTORY_SHOW} งวด\n\n**กฎเปลี่ยนสูตร:** ผิด 2 งวดติด")
 
-if st.sidebar.button("🔄 ล้าง Cache และโหลดใหม่", use_container_width=True):
+# ปุ่มล้างข้อมูล (สำคัญมาก: เมื่ออัปเกรดโค้ดต้องกดปุ่มนี้เพื่อโละสูตรเก่า)
+if st.sidebar.button("🔄 ล้าง Cache และบังคับหาชุดสูตรใหม่", use_container_width=True):
     st.cache_data.clear()
-    st.session_state.global_state = load_state()
+    
+    # ล้างข้อมูลของหวยที่กำลังเลือกอยู่ทิ้งไปเลย เพื่อบังคับระบบให้คิดใหม่ตั้งแต่ศูนย์
+    if selected_lotto in global_state:
+        del global_state[selected_lotto]
+        save_state(global_state)
+        st.session_state.global_state = global_state
+        
     st.rerun()
 
-st.markdown('<div class="main-title">🤖 LOTTO AI - ADAPTIVE EQUATION LOCK</div>', unsafe_allow_html=True)
+st.markdown('<div class="main-title">🤖 LOTTO AI - ADAPTIVE EQUATION V3</div>', unsafe_allow_html=True)
 url = LOTTO_URLS[selected_lotto]
 
-with st.spinner(f"กำลังดึงข้อมูล {selected_lotto}..."):
+with st.spinner(f"กำลังดึงข้อมูลและคำนวณสมการ {selected_lotto}..."):
     try:
         html = download_page(url)
         text = extract_post_text(html)
@@ -509,7 +570,7 @@ for col, position in zip(pred_cols, result["positions"]):
         st.metric(position, "-" if item["prediction"] is None else item["prediction"])
         st.caption(f"สูตร: {item['state'].get('formula', '-')}")
 
-st.markdown(f"## 📚 ประวัติย้อนหลัง {HISTORY_SHOW} งวด")
+st.markdown(f"## 📚 ประวัติย้อนหลัง {HISTORY_SHOW} งวด (ผลงานสูตรล่าสุด)")
 for position in result["positions"]:
     item = result["results"].get(position)
     if not item: continue
