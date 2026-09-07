@@ -17,7 +17,7 @@ warnings.filterwarnings('ignore')
 # -----------------------------------------
 # การตั้งค่า MongoDB
 # -----------------------------------------
-MONGO_URI = "mongodb+srv://admin:%40Sscg789@cluster0.1o86fzh.mongodb.net/?appName=Cluster0"
+MONGO_URI = "mongodb://admin:%40Sscg789@ac-wgijeal-shard-00-00.lo86fzh.mongodb.net:27017,ac-wgijeal-shard-00-01.lo86fzh.mongodb.net:27017,ac-wgijeal-shard-00-02.lo86fzh.mongodb.net:27017/?ssl=true&replicaSet=atlas-qdwhgz-shard-0&authSource=admin&appName=Cluster0"
 
 @st.cache_resource
 def init_mongo_connection():
