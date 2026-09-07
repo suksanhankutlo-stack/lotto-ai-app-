@@ -9,21 +9,23 @@ from xgboost import XGBClassifier
 from sklearn.naive_bayes import GaussianNB
 import warnings
 from pymongo import MongoClient
+from pymongo.server_api import ServerApi # เพิ่มตัวนี้
+import certifi # เพิ่มตัวนี้
 
 warnings.filterwarnings('ignore')
 
-# -----------------------------------------
-# การตั้งค่า MongoDB
-# -----------------------------------------
-# ⚠️ แนะนำ: ในการใช้งานจริง ควรเก็บ URL นี้ไว้ในไฟล์ Secrets เพื่อความปลอดภัยของรหัสผ่าน
 MONGO_URI = "mongodb+srv://admin:%40Sscg789@cluster0.1o86fzh.mongodb.net/?appName=Cluster0"
 
 @st.cache_resource
 def init_mongo_connection():
-    """เชื่อมต่อกับ MongoDB (ใช้ cache เพื่อไม่ให้เชื่อมต่อใหม่ทุกครั้ง)"""
-    client = MongoClient(MONGO_URI)
-    db = client["lottery_ai_database"] # สร้าง/เลือก Database ชื่อ lottery_ai_database
+    """เชื่อมต่อกับ MongoDB พร้อมตั้งค่า SSL Certificate สำหรับ Streamlit Cloud"""
+    # เพิ่ม tlsCAFile=certifi.where() เพื่อแก้ปัญหาเชื่อมต่อบน Cloud
+    client = MongoClient(MONGO_URI, server_api=ServerApi('1'), tlsCAFile=certifi.where())
+    db = client["lottery_ai_database"]
     return db
+
+# (โค้ดส่วนที่เหลือด้านล่างใช้เหมือนเดิมได้เลยครับ)
+
 
 # -----------------------------------------
 # ฐานข้อมูลลิงก์หวย
