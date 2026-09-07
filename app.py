@@ -1,18 +1,10 @@
 # ============================================================
-# LOTTO AI - ADAPTIVE EQUATION LOCK V2.0 (MONGODB EDITION)
-# ============================================================
-# FEATURES
-# 1. ดึงข้อมูลจาก Blogspot พร้อมตัดคำและวันที่ด้วย Regex
-# 2. ใช้ระบบ Cloud Database (MongoDB) เพื่อเก็บ State ถาวร
-# 3. จัดการ Session State ไม่ให้โหลดข้อมูลซ้ำซ้อน
-# 4. แสดงผลสถานะสูตรด้วยระบบสัญญาณไฟ (Traffic Light)
-# 5. ระบบ Adaptive Lock เปลี่ยนสูตรอัตโนมัติเมื่อผิด 2 งวดติด
+# LOTTO AI - ADAPTIVE EQUATION LOCK V2.1 (MONGODB + BACKFILL HISTORY)
 # ============================================================
 
 import os
 import re
 import json
-import hashlib
 import warnings
 from datetime import datetime
 
@@ -22,7 +14,6 @@ import requests
 import streamlit as st
 from bs4 import BeautifulSoup
 
-# นำเข้า MongoDB
 try:
     from pymongo import MongoClient
     MONGO_AVAILABLE = True
@@ -35,8 +26,9 @@ warnings.filterwarnings("ignore")
 # CONFIG
 # ============================================================
 APP_TITLE = "LOTTO AI - ADAPTIVE EQUATION LOCK"
-HISTORY_FILE = "lotto_adaptive_history.json" # ไว้เป็น Fallback กรณีไม่ได้ต่อ MongoDB
-LOOKBACK = 10
+HISTORY_FILE = "lotto_adaptive_history.json" 
+LOOKBACK = 30 # ดึงข้อมูลย้อนหลัง 30 งวด เพื่อใช้เป็น Data ให้ระบบจำลองประวัติ 10 งวด
+HISTORY_SHOW = 10 # จำนวนงวดที่ต้องการให้แสดงในประวัติ
 REQUEST_TIMEOUT = 20
 HEADERS = {
     "User-Agent": (
@@ -76,12 +68,14 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ============================================================
-# DATABASE SETUP (MONGODB + JSON FALLBACK)
+# DATABASE SETUP
 # ============================================================
 @st.cache_resource
 def init_mongo_connection():
-    if MONGO_AVAILABLE and "MONGO_URI" in st.secrets:
-        return MongoClient(st.secrets["MONGO_URI"])
+    if MONGO_AVAILABLE:
+        # ใส่ URI ลงตรงนี้ได้เลยตามที่คุณใช้งานอยู่
+        URI = "mongodb+srv://admin:%40Sscg789@cluster0.1o86fzh.mongodb.net/?appName=Cluster0"
+        return MongoClient(URI)
     return None
 
 def get_mongo_collection():
@@ -91,7 +85,6 @@ def get_mongo_collection():
     return None
 
 def load_state():
-    # ลองโหลดจาก MongoDB ก่อน
     collection = get_mongo_collection()
     if collection is not None:
         try:
@@ -103,7 +96,6 @@ def load_state():
         except Exception as e:
             st.warning(f"⚠️ ไม่สามารถดึงข้อมูลจาก MongoDB ได้ (ใช้ Local JSON แทน): {e}")
     
-    # Fallback กรณีไม่มี MongoDB
     if os.path.exists(HISTORY_FILE):
         try:
             with open(HISTORY_FILE, "r", encoding="utf-8") as f:
@@ -121,7 +113,6 @@ def save_state(state):
         except Exception as e:
             st.warning(f"⚠️ เกิดข้อผิดพลาดในการบันทึก MongoDB (ใช้ Local JSON แทน): {e}")
             
-    # Fallback กรณีไม่มี MongoDB
     tmp_file = HISTORY_FILE + ".tmp"
     with open(tmp_file, "w", encoding="utf-8") as f:
         json.dump(state, f, ensure_ascii=False, indent=2)
@@ -160,9 +151,7 @@ def parse_lottery_text(text):
     lines = [x.strip() for x in text.splitlines() if x.strip()]
     records = []
     
-    # Regex แบบควบรวม รองรับทั้ง 6 ตัว และ 3 ตัว (ดึงวันที่มาด้วย)
     pattern = r"\*?\s*(\d{4}-\d{2}-\d{2})\s*\|\s*(\d{3,6})\s*\|\s*(\d{2})"
-    
     for idx, line in enumerate(lines):
         match = re.search(pattern, line)
         if match:
@@ -186,7 +175,6 @@ def parse_lottery_text(text):
                 "raw": line
             })
 
-    # ⚠️ สำคัญมาก: ต้อง Reverse ข้อมูลให้เรียงจาก เก่า -> ใหม่ สำหรับ Backtest
     records = records[::-1]
     return records
 
@@ -202,7 +190,6 @@ def deduplicate_records(records):
 
 def select_last_draws(records):
     records = deduplicate_records(records)
-    # ตัดเอาเฉพาะ LOOKBACK งวดล่าสุด
     return records[-LOOKBACK:]
 
 # ============================================================
@@ -230,22 +217,15 @@ def result_to_digits(record):
 class FormulaEngine:
     def __init__(self):
         self.formulas = [
-            # Single lag
             ("L1", lambda d: d[-1]), ("L2", lambda d: d[-2]), ("L3", lambda d: d[-3]),
             ("L4", lambda d: d[-4]), ("L5", lambda d: d[-5]),
-            # Sum
             ("L1+L2", lambda d: d[-1] + d[-2]), ("L1+L3", lambda d: d[-1] + d[-3]),
             ("L2+L3", lambda d: d[-2] + d[-3]), ("L3+L4", lambda d: d[-3] + d[-4]),
-            # Difference
             ("L1-L2", lambda d: d[-1] - d[-2]), ("L2-L3", lambda d: d[-2] - d[-3]),
-            # Multiplication
             ("L1*L2", lambda d: d[-1] * d[-2]), ("L2*L3", lambda d: d[-2] * d[-3]),
-            # Weighted
             ("2L1+L2", lambda d: 2*d[-1] + d[-2]), ("L1+2L2", lambda d: d[-1] + 2*d[-2]),
-            # Constants
             ("L1+1", lambda d: d[-1] + 1), ("L1+2", lambda d: d[-1] + 2), ("L1+3", lambda d: d[-1] + 3),
             ("L1-1", lambda d: d[-1] - 1), ("L1-2", lambda d: d[-1] - 2),
-            # Combinations
             ("L1+L2+L3", lambda d: d[-1] + d[-2] + d[-3]),
             ("L1-L2+L3", lambda d: d[-1] - d[-2] + d[-3]),
         ]
@@ -292,22 +272,21 @@ def detect_positions(records):
     return sorted(list(positions))
 
 def build_position_series(records, position):
-    values = []
+    series = []
     for r in records:
         digits = result_to_digits(r)
-        if position in digits: values.append(int(digits[position]))
-    return values
-
-def create_initial_position_state(values):
-    top3 = rank_formulas(values)
-    if top3.empty:
-        return {"formula": "L1", "top3": [], "miss_streak": 0, "lock": True, "history": []}
-    top3_records = top3.to_dict('records')
-    return {"formula": top3_records[0]["formula"], "top3": top3_records, "miss_streak": 0, "lock": True, "history": []}
+        if position in digits: 
+            series.append({
+                "value": int(digits[position]),
+                "draw_id": r.get("draw_id", "-"),
+                "date": r.get("date", "-")
+            })
+    return series
 
 def refresh_position(values, old_state=None):
     top3 = rank_formulas(values)
-    if top3.empty: return create_initial_position_state(values)
+    if top3.empty: 
+        return {"formula": "L1", "top3": [], "miss_streak": 0, "lock": True, "history": []}
     top3_records = top3.to_dict('records')
     
     if old_state:
@@ -343,7 +322,8 @@ def add_prediction_history(state, actual, prediction, formula, draw_id, date_str
         "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     })
     
-    state["history"] = history[-10:]
+    # จำกัดประวัติให้เหลือเฉพาะ HISTORY_SHOW (10 งวด)
+    state["history"] = history[-HISTORY_SHOW:]
     return state
 
 def process_lottery(lottery_name, records, global_state):
@@ -357,47 +337,62 @@ def process_lottery(lottery_name, records, global_state):
     results = {}
 
     for idx, r in enumerate(records):
-        # ใช้วันที่เป็น ID สำหรับอ้างอิงงวด
         r["draw_id"] = r.get("date", f"Draw-{idx}")
 
     for position in positions:
-        values = build_position_series(records, position)
-        if len(values) < 6: continue
+        series = build_position_series(records, position)
+        if len(series) < 6: continue
         
-        old_state = lottery_state.get(position)
-        if not old_state:
-            state = create_initial_position_state(values)
-        else:
-            state = old_state
-            last_draw = records[-1]
-            last_draw_id = last_draw["draw_id"]
-            last_date = last_draw.get("date", "-")
+        values = [x["value"] for x in series]
+        state = lottery_state.get(position)
+        if not state:
+            state = {"formula": "L1", "top3": [], "miss_streak": 0, "lock": True, "history": []}
             
-            already_checked = any(x.get("draw") == last_draw_id for x in state.get("history", []))
+        # ระบบจำลองย้อนหลังอัตโนมัติ (Auto-Backfill History)
+        for i in range(5, len(series)):
+            draw_id = series[i]["draw_id"]
+            draw_date = series[i]["date"]
             
-            if not already_checked:
-                formula = state.get("formula", "L1")
-                history_values = values[:-1]
-                if len(history_values) >= 5:
-                    prediction = FormulaEngine().predict(formula, history_values)
-                    actual = values[-1]
-                    state = add_prediction_history(state, actual, prediction, formula, last_draw_id, last_date)
+            already_checked = any(x.get("draw") == draw_id for x in state.get("history", []))
+            if already_checked:
+                continue
+                
+            history_values = values[:i]
             
+            # หากเพิ่งรันครั้งแรก ให้คำนวณ Top3 ล่าสุด ณ เวลานั้น
+            if not state.get("top3"):
+                temp_state = refresh_position(history_values, None)
+                state["formula"] = temp_state["formula"]
+                state["top3"] = temp_state["top3"]
+                
+            formula = state.get("formula", "L1")
+            prediction = FormulaEngine().predict(formula, history_values)
+            actual = values[i]
+            
+            state = add_prediction_history(state, actual, prediction, formula, draw_id, draw_date)
+            
+            # กฎล็อกและเปลี่ยนสูตร
             if state.get("miss_streak", 0) >= 2:
+                current_values = values[:i+1]
                 old_formula = state.get("formula")
-                new_state = refresh_position(values, state)
+                new_state = refresh_position(current_values, state)
                 if len(new_state["top3"]) > 1:
                     candidates = [x["formula"] for x in new_state["top3"]]
                     if old_formula in candidates:
                         idx_old = candidates.index(old_formula)
                         if idx_old + 1 < len(candidates):
                             new_state["formula"] = candidates[idx_old + 1]
+                    else:
+                        new_state["formula"] = candidates[0]
                 new_state["miss_streak"] = 0
                 new_state["lock"] = True
                 state = new_state
-
+                
+        # อัปเดตสูตร Top3 งวดปัจจุบันสุดเพื่อโชว์ UI
+        state["top3"] = rank_formulas(values).to_dict('records')
         formula = state.get("formula", "L1")
         prediction = FormulaEngine().predict(formula, values)
+        
         results[position] = {"state": state, "values": values, "prediction": prediction}
         lottery_state[position] = state
         
@@ -426,7 +421,6 @@ def display_position_history(state):
 # ============================================================
 # MAIN APP FLOW
 # ============================================================
-# ระบบ Session State ลดการอ่าน/เขียน DB พร่ำเพรื่อ
 if "global_state" not in st.session_state:
     st.session_state.global_state = load_state()
 
@@ -434,7 +428,7 @@ global_state = st.session_state.global_state
 
 st.sidebar.title("⚙️ ตั้งค่าระบบ")
 selected_lotto = st.sidebar.selectbox("เลือกหวย", list(LOTTO_URLS.keys()))
-st.sidebar.markdown(f"**ข้อมูลย้อนหลัง:** {LOOKBACK} งวด\n\n**กฎเปลี่ยนสูตร:** ผิด 2 งวดติด")
+st.sidebar.markdown(f"**ข้อมูลย้อนหลัง (สำหรับจำลอง):** {LOOKBACK} งวด\n\n**แสดงประวัติ:** {HISTORY_SHOW} งวด\n\n**กฎเปลี่ยนสูตร:** ผิด 2 งวดติด")
 
 if st.sidebar.button("🔄 ล้าง Cache และโหลดใหม่", use_container_width=True):
     st.cache_data.clear()
@@ -456,13 +450,12 @@ with st.spinner(f"กำลังดึงข้อมูล {selected_lotto}...
 records = select_last_draws(records)
 
 col1, col2, col3 = st.columns(3)
-with col1: st.metric("งวดที่พบ", len(records))
-with col2: st.metric("ย้อนหลังที่ใช้", min(len(records), LOOKBACK))
+with col1: st.metric("งวดที่พบทั้งหมด", len(records))
+with col2: st.metric("ประวัติจำลองย้อนหลัง", min(len(records), LOOKBACK))
 with col3: st.metric("ตำแหน่ง", len(detect_positions(records)))
 
 with st.expander("📋 ดูข้อมูลที่ดึงมา (ดิบ)"):
     raw_rows = []
-    # เรียงให้งวดใหม่สุดอยู่บนเวลาโชว์ตาราง
     for i, r in enumerate(records[::-1], start=1):
         raw_rows.append({
             "วันที่": r.get("date"),
@@ -481,7 +474,6 @@ if "error" in result:
     st.error(result["error"])
     st.stop()
 
-# อัปเดต Global State และบันทึก
 st.session_state.global_state = global_state
 save_state(global_state)
 
@@ -494,7 +486,6 @@ for position in result["positions"]:
     state = item["state"]
     miss = state.get("miss_streak", 0)
     
-    # ระบบสีแจ้งเตือน
     if miss == 0: status = "🟢 ปลอดภัย (LOCK)"
     elif miss == 1: status = "🟡 เฝ้าระวัง"
     else: status = "🔄 รอเปลี่ยนสูตร"
@@ -518,14 +509,13 @@ for col, position in zip(pred_cols, result["positions"]):
         st.metric(position, "-" if item["prediction"] is None else item["prediction"])
         st.caption(f"สูตร: {item['state'].get('formula', '-')}")
 
-st.markdown("## 📚 ประวัติย้อนหลัง (ดูว่าสูตรหลุดหรือยัง)")
+st.markdown(f"## 📚 ประวัติย้อนหลัง {HISTORY_SHOW} งวด")
 for position in result["positions"]:
     item = result["results"].get(position)
     if not item: continue
     state = item["state"]
     miss = state.get("miss_streak", 0)
     
-    # ใส่ Emoji บอกสถานะที่ชื่อ Expander เลย
     icon = "🟢" if miss == 0 else "🟡" if miss == 1 else "🔴"
     with st.expander(f"{icon} หลัก {position} • สูตร {state.get('formula')} (ผิด {miss} งวด)"):
         display_position_history(state)
