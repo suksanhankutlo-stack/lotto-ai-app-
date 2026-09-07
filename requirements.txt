@@ -5,6 +5,6 @@ scikit-learn
 xgboost
 beautifulsoup4
 requests
-pymongo
+pymongo[srv]
 
 
