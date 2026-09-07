@@ -5,3 +5,5 @@ scikit-learn
 xgboost
 beautifulsoup4
 requests
+pip install pymongo
+
