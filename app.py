@@ -1,64 +1,60 @@
-# ============================================================
-# 🎯 LOTTO AI V2.0
-# MAIN ARTICLE SCRAPER + MONGODB UPSERT
-# WALK-FORWARD BACKTEST + ADAPTIVE ENSEMBLE
-# TOP-3 EVERY POSITION + NEXT DRAW PREDICTION
-# ============================================================
+# ================================================================
+# 🎯 LOTTO AI V2.2
+# ROBUST BLOGGER SCRAPER + WALK-FORWARD + ADAPTIVE ENSEMBLE
+# TOP-3 EVERY POSITION
+# ================================================================
 
-import streamlit as st
+import re
+import time
+import hashlib
+import warnings
+from datetime import datetime
+
 import numpy as np
 import pandas as pd
 import requests
+import streamlit as st
+
 from bs4 import BeautifulSoup
-import re
-import warnings
-import os
-import math
 
-from collections import Counter
+from sklearn.ensemble import (
+    ExtraTreesClassifier,
+    HistGradientBoostingClassifier
+)
 
-from sklearn.ensemble import ExtraTreesClassifier, HistGradientBoostingClassifier
 from sklearn.naive_bayes import GaussianNB
 
-# XGBoost เป็น optional
+warnings.filterwarnings("ignore")
+
+
+# ================================================================
+# OPTIONAL XGBOOST
+# ================================================================
+
 try:
     from xgboost import XGBClassifier
     XGB_AVAILABLE = True
 except Exception:
     XGB_AVAILABLE = False
 
-# MongoDB
-from pymongo import MongoClient, UpdateOne
-from pymongo.server_api import ServerApi
-import certifi
 
-warnings.filterwarnings("ignore")
+# ================================================================
+# PAGE CONFIG
+# ================================================================
 
-# ============================================================
-# CONFIG
-# ============================================================
-
-APP_TITLE = "🎯 LOTTO AI V2.0 — Adaptive Walk-Forward"
-
-REQUEST_TIMEOUT = 20
-
-DEFAULT_LAG = 5
-
-# จำนวนงวดสำหรับ Backtest
-DEFAULT_BACKTEST = 30
-
-# อย่างน้อยต้องมีข้อมูลเท่านี้
-MIN_HISTORY = 40
-
-# TOP-N
-TOP_N = 3
+st.set_page_config(
+    page_title="LOTTO AI V2.2",
+    page_icon="🎯",
+    layout="wide"
+)
 
 
-# ============================================================
+# ================================================================
 # LOTTERY SOURCES
-# ============================================================
+# ================================================================
 
 LOTTERY_SOURCES = {
+
     "หวยไทย":
         "https://suksan18190.blogspot.com/2026/07/blog-post_07.html",
 
@@ -91,41 +87,705 @@ LOTTERY_SOURCES = {
 }
 
 
-# ============================================================
-# PAGE
-# ============================================================
+# ================================================================
+# CONFIG
+# ================================================================
 
-st.set_page_config(
-    page_title=APP_TITLE,
-    layout="wide",
-    initial_sidebar_state="expanded"
+MIN_HISTORY = 40
+
+BACKTEST_MAX = 25
+
+TOP_K = 3
+
+REQUEST_TIMEOUT = 20
+
+USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+    "AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/130.0 Safari/537.36"
 )
 
 
-# ============================================================
+# ================================================================
+# HEADER
+# ================================================================
+
+st.title("🎯 LOTTO AI V2.2")
+st.caption(
+    "Robust Blogger Scraper • Walk-Forward Backtest • "
+    "Adaptive Ensemble • TOP-3 ทุกหลัก"
+)
+
+st.info(
+    "ระบบนี้เป็นการวิเคราะห์ข้อมูลย้อนหลังเชิงสถิติ/แมชชีนเลิร์นนิง "
+    "ไม่สามารถรับประกันผลรางวัลจริงได้"
+)
+
+
+# ================================================================
+# SIDEBAR
+# ================================================================
+
+st.sidebar.header("⚙️ ตั้งค่าระบบ")
+
+lottery_type = st.sidebar.selectbox(
+    "เลือกประเภทหวย",
+    list(LOTTERY_SOURCES.keys())
+)
+
+target_date = st.sidebar.date_input(
+    "วันที่ต้องการวิเคราะห์",
+    value=datetime.now().date()
+)
+
+min_history = st.sidebar.slider(
+    "จำนวนข้อมูลขั้นต่ำ",
+    20,
+    200,
+    MIN_HISTORY,
+    5
+)
+
+backtest_n = st.sidebar.slider(
+    "จำนวนงวด Backtest",
+    5,
+    50,
+    BACKTEST_MAX,
+    5
+)
+
+use_xgb = st.sidebar.checkbox(
+    "ใช้ XGBoost ถ้าติดตั้งได้",
+    value=True
+)
+
+show_debug = st.sidebar.checkbox(
+    "แสดง Debug Scraper",
+    value=False
+)
+
+
+# ================================================================
+# SESSION STATE
+# ================================================================
+
+if "data" not in st.session_state:
+    st.session_state.data = None
+
+if "scraper_debug" not in st.session_state:
+    st.session_state.scraper_debug = {}
+
+if "backtest" not in st.session_state:
+    st.session_state.backtest = None
+
+if "prediction" not in st.session_state:
+    st.session_state.prediction = None
+
+
+# ================================================================
+# TEXT NORMALIZATION
+# ================================================================
+
+def normalize_text(text):
+
+    if text is None:
+        return ""
+
+    text = text.replace("\xa0", " ")
+    text = text.replace("\u200b", "")
+    text = text.replace("\ufeff", "")
+
+    # normalize Thai digits
+    thai_digits = "๐๑๒๓๔๕๖๗๘๙"
+    arabic_digits = "0123456789"
+
+    trans = str.maketrans(
+        thai_digits,
+        arabic_digits
+    )
+
+    text = text.translate(trans)
+
+    # normalize separators
+    text = text.replace("｜", "|")
+    text = text.replace("¦", "|")
+
+    # normalize newlines
+    text = text.replace("\r\n", "\n")
+    text = text.replace("\r", "\n")
+
+    return text
+
+
+# ================================================================
+# DATE VALIDATOR
+# ================================================================
+
+def valid_date(s):
+
+    try:
+
+        d = pd.to_datetime(
+            s,
+            format="%Y-%m-%d",
+            errors="coerce"
+        )
+
+        return not pd.isna(d)
+
+    except Exception:
+        return False
+
+
+# ================================================================
+# PARSE ONE LINE
+# ================================================================
+
+def parse_draw_line(line):
+
+    line = normalize_text(line).strip()
+
+    if not line:
+        return None
+
+    # ------------------------------------------------------------
+    # Format:
+    # 2026-09-21 | 225 | 92
+    # ------------------------------------------------------------
+
+    m = re.search(
+        r"(\d{4}-\d{2}-\d{2})\s*\|\s*(\d{3})\s*\|\s*(\d{2})",
+        line
+    )
+
+    if not m:
+        return None
+
+    date_str = m.group(1)
+    three = m.group(2)
+    two = m.group(3)
+
+    if not valid_date(date_str):
+        return None
+
+    if len(three) != 3:
+        return None
+
+    if len(two) != 2:
+        return None
+
+    return {
+        "date": date_str,
+        "three": three,
+        "two": two
+    }
+
+
+# ================================================================
+# FIND BLOGGER POST BODY
+# ================================================================
+
+def find_post_body(soup):
+
+    candidates = []
+
+    selectors = [
+
+        "div.post-body",
+
+        "div.post-body.entry-content",
+
+        "article div.post-body",
+
+        "article .post-body",
+
+        ".post-body",
+
+        ".entry-content",
+
+    ]
+
+    for selector in selectors:
+
+        try:
+
+            nodes = soup.select(selector)
+
+            for node in nodes:
+
+                text = node.get_text(
+                    "\n",
+                    strip=True
+                )
+
+                if text:
+
+                    date_count = len(
+                        re.findall(
+                            r"\d{4}-\d{2}-\d{2}",
+                            text
+                        )
+                    )
+
+                    pipe_count = text.count("|")
+
+                    score = (
+                        date_count * 1000
+                        + pipe_count * 10
+                        + min(len(text), 5000) / 10000
+                    )
+
+                    candidates.append(
+                        (score, node, selector)
+                    )
+
+        except Exception:
+            pass
+
+    if not candidates:
+        return None, None
+
+    candidates.sort(
+        key=lambda x: x[0],
+        reverse=True
+    )
+
+    _, node, selector = candidates[0]
+
+    return node, selector
+
+
+# ================================================================
+# EXTRACT MAIN ARTICLE
+# ================================================================
+
+def extract_main_post_text(html):
+
+    soup = BeautifulSoup(
+        html,
+        "html.parser"
+    )
+
+    # ------------------------------------------------------------
+    # 1. Try post body
+    # ------------------------------------------------------------
+
+    node, selector = find_post_body(soup)
+
+    if node is not None:
+
+        text = node.get_text(
+            "\n",
+            strip=True
+        )
+
+        return text, f"POST_BODY:{selector}"
+
+
+    # ------------------------------------------------------------
+    # 2. Try article
+    # ------------------------------------------------------------
+
+    articles = soup.find_all("article")
+
+    best_text = ""
+    best_score = -1
+
+    for article in articles:
+
+        text = article.get_text(
+            "\n",
+            strip=True
+        )
+
+        dates = len(
+            re.findall(
+                r"\d{4}-\d{2}-\d{2}",
+                text
+            )
+        )
+
+        if dates > best_score:
+
+            best_score = dates
+            best_text = text
+
+    if best_text:
+
+        return best_text, "ARTICLE_FALLBACK"
+
+
+    # ------------------------------------------------------------
+    # 3. Body fallback
+    # ------------------------------------------------------------
+
+    body = soup.find("body")
+
+    if body:
+
+        text = body.get_text(
+            "\n",
+            strip=True
+        )
+
+        # Important:
+        # stop before popular posts / sidebar
+        stop_words = [
+            "โพสต์ยอดนิยมจากบล็อกนี้",
+            "Popular Posts",
+            "Popular post",
+            "บทความยอดนิยม"
+        ]
+
+        for word in stop_words:
+
+            pos = text.find(word)
+
+            if pos > 0:
+
+                text = text[:pos]
+
+        return text, "BODY_FALLBACK"
+
+
+    return "", "NO_CONTENT"
+
+
+# ================================================================
+# HTTP FETCH
+# ================================================================
+
+def fetch_url(url):
+
+    headers = {
+        "User-Agent": USER_AGENT,
+        "Accept": (
+            "text/html,application/xhtml+xml,"
+            "application/xml;q=0.9,image/avif,"
+            "image/webp,*/*;q=0.8"
+        ),
+        "Accept-Language":
+            "th-TH,th;q=0.9,en-US;q=0.8,en;q=0.7",
+        "Cache-Control": "no-cache",
+        "Pragma": "no-cache",
+    }
+
+    urls = [
+        url,
+        url + ("&" if "?" in url else "?") + "m=1"
+    ]
+
+    last_error = None
+
+    for test_url in urls:
+
+        try:
+
+            response = requests.get(
+                test_url,
+                headers=headers,
+                timeout=REQUEST_TIMEOUT,
+                allow_redirects=True
+            )
+
+            html = response.text
+
+            if response.status_code == 200 and len(html) > 1000:
+
+                return {
+                    "success": True,
+                    "url": test_url,
+                    "final_url": response.url,
+                    "status": response.status_code,
+                    "html": html,
+                    "length": len(html),
+                    "error": None
+                }
+
+            last_error = (
+                f"HTTP {response.status_code}, "
+                f"HTML={len(html)}"
+            )
+
+        except Exception as e:
+
+            last_error = str(e)
+
+    return {
+        "success": False,
+        "url": url,
+        "final_url": "",
+        "status": None,
+        "html": "",
+        "length": 0,
+        "error": last_error
+    }
+
+
+# ================================================================
+# PARSE ALL DRAW DATA
+# ================================================================
+
+def parse_draws(text):
+
+    rows = []
+
+    # ------------------------------------------------------------
+    # First: line parser
+    # ------------------------------------------------------------
+
+    for line in text.splitlines():
+
+        item = parse_draw_line(line)
+
+        if item:
+
+            rows.append(item)
+
+
+    # ------------------------------------------------------------
+    # Second: global fallback
+    # ------------------------------------------------------------
+
+    if len(rows) < 3:
+
+        matches = re.findall(
+            r"(\d{4}-\d{2}-\d{2})\s*\|\s*(\d{3})\s*\|\s*(\d{2})",
+            text
+        )
+
+        for d, three, two in matches:
+
+            if valid_date(d):
+
+                rows.append({
+                    "date": d,
+                    "three": three,
+                    "two": two
+                })
+
+
+    # ------------------------------------------------------------
+    # DataFrame
+    # ------------------------------------------------------------
+
+    if not rows:
+
+        return pd.DataFrame(
+            columns=[
+                "date",
+                "three",
+                "two"
+            ]
+        )
+
+    df = pd.DataFrame(rows)
+
+    # normalize
+    df["date"] = pd.to_datetime(
+        df["date"],
+        errors="coerce"
+    )
+
+    df["three"] = (
+        df["three"]
+        .astype(str)
+        .str.replace(r"\D", "", regex=True)
+        .str.zfill(3)
+    )
+
+    df["two"] = (
+        df["two"]
+        .astype(str)
+        .str.replace(r"\D", "", regex=True)
+        .str.zfill(2)
+    )
+
+    df = df.dropna(
+        subset=["date"]
+    )
+
+    # valid
+    df = df[
+        df["three"].str.len().eq(3)
+        &
+        df["two"].str.len().eq(2)
+    ]
+
+    # remove duplicates
+    df = (
+        df.sort_values("date")
+        .drop_duplicates(
+            subset=["date"],
+            keep="last"
+        )
+        .reset_index(drop=True)
+    )
+
+    return df
+
+
+# ================================================================
+# SCRAPE LOTTERY
+# ================================================================
+
+def scrape_lottery(lottery):
+
+    url = LOTTERY_SOURCES[lottery]
+
+    result = fetch_url(url)
+
+    debug = {
+        "source": url,
+        "request_url": result.get("url"),
+        "final_url": result.get("final_url"),
+        "status": result.get("status"),
+        "html_length": result.get("length"),
+        "success": result.get("success"),
+        "error": result.get("error"),
+        "parser": "",
+        "dates_found": 0,
+        "rows": 0
+    }
+
+    if not result["success"]:
+
+        return None, debug
+
+    html = result["html"]
+
+    text, parser_name = extract_main_post_text(
+        html
+    )
+
+    debug["parser"] = parser_name
+
+    # ------------------------------------------------------------
+    # parse
+    # ------------------------------------------------------------
+
+    df = parse_draws(text)
+
+    debug["dates_found"] = len(
+        re.findall(
+            r"\d{4}-\d{2}-\d{2}",
+            text
+        )
+    )
+
+    debug["rows"] = len(df)
+
+    # ------------------------------------------------------------
+    # emergency full HTML fallback
+    # ------------------------------------------------------------
+
+    if len(df) < 3:
+
+        raw_text = BeautifulSoup(
+            html,
+            "html.parser"
+        ).get_text(
+            "\n",
+            strip=True
+        )
+
+        df2 = parse_draws(raw_text)
+
+        if len(df2) > len(df):
+
+            df = df2
+
+            debug["parser"] += " + FULL_HTML_FALLBACK"
+
+            debug["rows"] = len(df)
+
+    if len(df) == 0:
+
+        debug["sample"] = text[:1500]
+
+        return None, debug
+
+    return df, debug
+
+
+# ================================================================
+# DATA VALIDATION
+# ================================================================
+
+def validate_data(df):
+
+    report = {}
+
+    if df is None or df.empty:
+
+        return False, {
+            "error": "ไม่มีข้อมูล"
+        }
+
+    report["rows"] = len(df)
+
+    report["date_min"] = (
+        df["date"].min()
+    )
+
+    report["date_max"] = (
+        df["date"].max()
+    )
+
+    report["duplicate_dates"] = int(
+        df["date"].duplicated().sum()
+    )
+
+    report["nulls"] = int(
+        df[["date", "three", "two"]]
+        .isna()
+        .sum()
+        .sum()
+    )
+
+    report["valid_3digit"] = int(
+        df["three"]
+        .astype(str)
+        .str.fullmatch(r"\d{3}")
+        .sum()
+    )
+
+    report["valid_2digit"] = int(
+        df["two"]
+        .astype(str)
+        .str.fullmatch(r"\d{2}")
+        .sum()
+    )
+
+    ok = (
+        report["rows"] >= 3
+        and report["valid_3digit"] == report["rows"]
+        and report["valid_2digit"] == report["rows"]
+    )
+
+    return ok, report
+
+
+# ================================================================
 # MONGODB
-# ============================================================
+# ================================================================
 
 def get_mongo_uri():
 
-    # Streamlit Cloud / secrets
     try:
-        uri = st.secrets.get("MONGO_URI", None)
 
-        if uri:
-            return uri
+        if "MONGO_URI" in st.secrets:
+
+            return st.secrets["MONGO_URI"]
 
     except Exception:
         pass
 
-    # Environment variable
-    uri = os.environ.get("MONGO_URI")
-
-    return uri
+    return None
 
 
 @st.cache_resource
-def init_mongo_connection():
+def get_mongo_collection():
 
     uri = get_mongo_uri()
 
@@ -134,740 +794,346 @@ def init_mongo_connection():
 
     try:
 
+        from pymongo import MongoClient
+
         client = MongoClient(
             uri,
-            server_api=ServerApi("1"),
-            tlsCAFile=certifi.where(),
-            serverSelectionTimeoutMS=10000
+            serverSelectionTimeoutMS=5000
         )
 
-        # ตรวจ connection
-        client.admin.command("ping")
-
-        db = client["lottery_ai_database"]
-
-        return db
-
-    except Exception as e:
-
-        st.error(
-            "❌ เชื่อมต่อ MongoDB ไม่สำเร็จ\n\n"
-            f"{e}"
+        client.admin.command(
+            "ping"
         )
+
+        db = client["lotto_ai"]
+
+        collection = db["results"]
+
+        collection.create_index(
+            [
+                ("lottery", 1),
+                ("date", 1)
+            ],
+            unique=True
+        )
+
+        return collection
+
+    except Exception:
 
         return None
 
 
-# ============================================================
-# HTTP SESSION
-# ============================================================
+# ================================================================
+# SAVE MONGO
+# ================================================================
 
-@st.cache_resource
-def get_http_session():
+def save_to_mongo(
+    df,
+    lottery
+):
 
-    session = requests.Session()
+    collection = get_mongo_collection()
 
-    session.headers.update({
-        "User-Agent":
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-            "AppleWebKit/537.36 "
-            "(KHTML, like Gecko) "
-            "Chrome/130.0 Safari/537.36"
-    })
+    if collection is None:
 
-    return session
+        return False, "MongoDB ไม่พร้อมใช้งาน"
 
+    from pymongo import UpdateOne
 
-# ============================================================
-# 1. FIND MAIN ARTICLE
-# ============================================================
+    operations = []
 
-def find_main_article(soup):
+    for _, row in df.iterrows():
 
-    candidates = []
-
-    # Blogger
-    selectors = [
-        ".post-body",
-        ".post-body.entry-content",
-        ".entry-content",
-        "article",
-        ".post",
-        ".post-content",
-        ".blog-posts"
-    ]
-
-    for selector in selectors:
-
-        try:
-
-            elements = soup.select(selector)
-
-            for element in elements:
-
-                text = element.get_text(
-                    "\n",
-                    strip=True
-                )
-
-                if len(text) > 100:
-
-                    candidates.append(
-                        (len(text), element)
+        operations.append(
+            UpdateOne(
+                {
+                    "lottery": lottery,
+                    "date": row["date"].strftime(
+                        "%Y-%m-%d"
                     )
+                },
+                {
+                    "$set": {
+                        "lottery": lottery,
+                        "date": row["date"].strftime(
+                            "%Y-%m-%d"
+                        ),
+                        "three": row["three"],
+                        "two": row["two"],
+                        "updated_at": datetime.utcnow()
+                    }
+                },
+                upsert=True
+            )
+        )
 
-        except Exception:
-            continue
+    if operations:
 
-    if not candidates:
+        collection.bulk_write(
+            operations,
+            ordered=False
+        )
+
+    return True, f"บันทึก {len(operations)} รายการ"
+
+
+# ================================================================
+# LOAD MONGO
+# ================================================================
+
+def load_from_mongo(lottery):
+
+    collection = get_mongo_collection()
+
+    if collection is None:
 
         return None
 
-    # เลือก element ที่มี pattern วันที่มากที่สุด
-    scored = []
-
-    for length, element in candidates:
-
-        text = element.get_text(
-            "\n",
-            strip=True
-        )
-
-        date_count = len(
-            re.findall(
-                r"\d{4}-\d{2}-\d{2}",
-                text
-            )
-        )
-
-        score = date_count * 100000 + length
-
-        scored.append(
-            (score, element)
-        )
-
-    scored.sort(
-        key=lambda x: x[0],
-        reverse=True
-    )
-
-    return scored[0][1]
-
-
-# ============================================================
-# 2. PARSE DRAW DATA
-# ============================================================
-
-def parse_draws_from_article(article):
-
-    if article is None:
-        return []
-
-    # ใช้ text ของบทความหลักเท่านั้น
-    text = article.get_text(
-        "\n",
-        strip=True
-    )
-
-    # normalize
-    text = text.replace("\xa0", " ")
-
-    # --------------------------------------------------------
-    # รูปแบบหลัก:
-    #
-    # * 2026-09-20 | 123 | 45
-    #
-    # --------------------------------------------------------
-
-    patterns = [
-
-        r"\*?\s*"
-        r"(\d{4}-\d{2}-\d{2})"
-        r"\s*\|\s*"
-        r"(\d{3})"
-        r"\s*\|\s*"
-        r"(\d{2})",
-
-        r"(\d{4}-\d{2}-\d{2})"
-        r"\s*\|\s*"
-        r"(\d{3})"
-        r"\s*\|\s*"
-        r"(\d{2})",
-    ]
-
-    matches = []
-
-    for pattern in patterns:
-
-        found = re.findall(
-            pattern,
-            text
-        )
-
-        if found:
-            matches.extend(found)
-
-    # remove duplicate tuples
-    matches = list(
-        dict.fromkeys(matches)
-    )
-
-    rows = []
-
-    for date_str, three_digit, two_digit in matches:
-
-        try:
-
-            # ตรวจสอบ date
-            dt = pd.to_datetime(
-                date_str,
-                format="%Y-%m-%d",
-                errors="coerce"
-            )
-
-            if pd.isna(dt):
-                continue
-
-            # ตรวจสอบเลข
-            if not re.fullmatch(
-                r"\d{3}",
-                three_digit
-            ):
-                continue
-
-            if not re.fullmatch(
-                r"\d{2}",
-                two_digit
-            ):
-                continue
-
-            rows.append({
-
-                "Date": date_str,
-
-                "ThreeDigit": three_digit,
-
-                "TwoDigit": two_digit,
-
-                "Hundreds": int(three_digit[0]),
-
-                "Tens": int(three_digit[1]),
-
-                "Units": int(three_digit[2]),
-
-                "TwoTens": int(two_digit[0]),
-
-                "TwoUnits": int(two_digit[1]),
-            })
-
-        except Exception:
-            continue
-
-    return rows
-
-
-# ============================================================
-# 3. DATA VALIDATION
-# ============================================================
-
-def validate_dataframe(df):
-
-    if df is None or df.empty:
-
-        return pd.DataFrame(), {
-            "raw": 0,
-            "valid": 0,
-            "duplicates": 0,
-            "invalid": 0
-        }
-
-    df = df.copy()
-
-    raw_count = len(df)
-
-    required = [
-        "Date",
-        "ThreeDigit",
-        "TwoDigit",
-        "Hundreds",
-        "Tens",
-        "Units",
-        "TwoTens",
-        "TwoUnits"
-    ]
-
-    for col in required:
-
-        if col not in df.columns:
-
-            return pd.DataFrame(), {
-                "raw": raw_count,
-                "valid": 0,
-                "duplicates": 0,
-                "invalid": raw_count
+    docs = list(
+        collection.find(
+            {
+                "lottery": lottery
+            },
+            {
+                "_id": 0
             }
+        )
+        .sort("date", 1)
+    )
 
-    # Date
-    df["Date"] = pd.to_datetime(
-        df["Date"],
+    if not docs:
+
+        return None
+
+    df = pd.DataFrame(docs)
+
+    df["date"] = pd.to_datetime(
+        df["date"],
         errors="coerce"
     )
 
-    # ตรวจเลข
-    mask = (
-
-        df["Date"].notna()
-
-        & df["ThreeDigit"]
-            .astype(str)
-            .str.fullmatch(r"\d{3}")
-
-        & df["TwoDigit"]
-            .astype(str)
-            .str.fullmatch(r"\d{2}")
-    )
-
-    invalid_count = int((~mask).sum())
-
-    df = df.loc[mask].copy()
-
-    # บังคับ string ให้คง leading zero
-    df["ThreeDigit"] = (
-        df["ThreeDigit"]
+    df["three"] = (
+        df["three"]
         .astype(str)
         .str.zfill(3)
     )
 
-    df["TwoDigit"] = (
-        df["TwoDigit"]
+    df["two"] = (
+        df["two"]
         .astype(str)
         .str.zfill(2)
     )
 
-    # --------------------------------------------------------
-    # Duplicate
-    # --------------------------------------------------------
-
-    before_dup = len(df)
-
-    df = df.drop_duplicates(
-        subset=["Date"],
-        keep="last"
+    return (
+        df[
+            ["date", "three", "two"]
+        ]
+        .dropna()
+        .drop_duplicates(
+            "date"
+        )
+        .sort_values("date")
+        .reset_index(drop=True)
     )
 
-    duplicates = before_dup - len(df)
 
-    # --------------------------------------------------------
-    # sort
-    # --------------------------------------------------------
+# ================================================================
+# FEATURE ENGINE
+# ================================================================
 
-    df = df.sort_values(
-        "Date"
-    ).reset_index(drop=True)
-
-    # Draw_ID
-    df["Draw_ID"] = np.arange(
-        1,
-        len(df) + 1
-    )
-
-    # Date เป็น string
-    df["Date"] = df["Date"].dt.strftime(
-        "%Y-%m-%d"
-    )
-
-    stats = {
-
-        "raw": raw_count,
-
-        "valid": len(df),
-
-        "duplicates": duplicates,
-
-        "invalid": invalid_count
-    }
-
-    return df, stats
-
-
-# ============================================================
-# 4. SCRAPE WEBSITE
-# ============================================================
-
-def scrape_lottery(lottery_type, url):
-
-    session = get_http_session()
-
-    try:
-
-        response = session.get(
-            url,
-            timeout=REQUEST_TIMEOUT
-        )
-
-        response.raise_for_status()
-
-        soup = BeautifulSoup(
-            response.text,
-            "html.parser"
-        )
-
-        article = find_main_article(
-            soup
-        )
-
-        if article is None:
-
-            return None, {
-                "error":
-                    "ไม่พบ Main Article / post-body"
-            }
-
-        rows = parse_draws_from_article(
-            article
-        )
-
-        if not rows:
-
-            return None, {
-                "error":
-                    "ไม่พบข้อมูลรูปแบบ วันที่ | 3 ตัว | 2 ตัว"
-            }
-
-        raw_df = pd.DataFrame(rows)
-
-        df, stats = validate_dataframe(
-            raw_df
-        )
-
-        if df.empty:
-
-            return None, {
-                "error":
-                    "ข้อมูลไม่ผ่านการตรวจสอบ",
-                **stats
-            }
-
-        stats["url"] = url
-
-        return df, stats
-
-    except Exception as e:
-
-        return None, {
-            "error": str(e),
-            "url": url
-        }
-
-
-# ============================================================
-# 5. SAVE TO MONGODB - UPSERT
-# ============================================================
-
-def save_to_mongo(
-    lottery_type,
-    df,
-    db
+def digit_features(
+    series,
+    idx,
+    windows=(5, 10, 20)
 ):
 
-    if db is None:
+    # IMPORTANT:
+    # features use ONLY rows before idx
 
-        return False, "MongoDB ไม่ได้เชื่อมต่อ"
-
-    if df is None or df.empty:
-
-        return False, "ไม่มีข้อมูล"
-
-    try:
-
-        collection = db[lottery_type]
-
-        # Unique index
-        collection.create_index(
-            [("Date", 1)],
-            unique=True
-        )
-
-        operations = []
-
-        for _, row in df.iterrows():
-
-            doc = {
-
-                "Date": row["Date"],
-
-                "ThreeDigit":
-                    str(row["ThreeDigit"]).zfill(3),
-
-                "TwoDigit":
-                    str(row["TwoDigit"]).zfill(2),
-
-                "Hundreds":
-                    int(row["Hundreds"]),
-
-                "Tens":
-                    int(row["Tens"]),
-
-                "Units":
-                    int(row["Units"]),
-
-                "TwoTens":
-                    int(row["TwoTens"]),
-
-                "TwoUnits":
-                    int(row["TwoUnits"])
-            }
-
-            operations.append(
-
-                UpdateOne(
-
-                    {
-                        "Date": row["Date"]
-                    },
-
-                    {
-                        "$set": doc
-                    },
-
-                    upsert=True
-                )
-            )
-
-        if operations:
-
-            result = collection.bulk_write(
-                operations,
-                ordered=False
-            )
-
-        return True, (
-            f"อัปเดต {len(operations)} รายการ"
-        )
-
-    except Exception as e:
-
-        return False, str(e)
-
-
-# ============================================================
-# 6. LOAD MONGO
-# ============================================================
-
-def load_from_mongo(
-    lottery_type,
-    db
-):
-
-    if db is None:
-        return None
-
-    try:
-
-        collection = db[lottery_type]
-
-        data = list(
-            collection.find(
-                {},
-                {"_id": 0}
-            )
-        )
-
-        if not data:
-            return None
-
-        df = pd.DataFrame(data)
-
-        df, _ = validate_dataframe(
-            df
-        )
-
-        return df
-
-    except Exception as e:
-
-        st.error(
-            f"MongoDB อ่านข้อมูลไม่ได้: {e}"
-        )
-
-        return None
-
-
-# ============================================================
-# 7. FEATURE ENGINEERING
-# ============================================================
-
-def make_feature_row(
-    history,
-    lag=5
-):
-
-    history = np.asarray(
-        history,
+    hist = np.asarray(
+        series[:idx],
         dtype=int
     )
 
-    if len(history) < lag:
+    if len(hist) == 0:
 
         return None
 
-    row = {}
+    f = {}
 
-    # --------------------------------------------------------
-    # LAG
-    # --------------------------------------------------------
+    # ------------------------------------------------------------
+    # Lag
+    # ------------------------------------------------------------
 
-    for i in range(1, lag + 1):
+    for lag in [1, 2, 3, 5, 7]:
 
-        row[f"lag_{i}"] = int(
-            history[-i]
-        )
+        if len(hist) >= lag:
 
-    # --------------------------------------------------------
-    # Recent windows
-    # --------------------------------------------------------
-
-    for window in [3, 5, 10, 20]:
-
-        if len(history) >= window:
-
-            recent = history[-window:]
+            f[f"lag_{lag}"] = int(
+                hist[-lag]
+            )
 
         else:
 
-            recent = history
+            f[f"lag_{lag}"] = -1
 
-        row[f"mean_{window}"] = float(
-            np.mean(recent)
-        )
 
-        row[f"std_{window}"] = float(
-            np.std(recent)
-        )
-
-        row[f"min_{window}"] = int(
-            np.min(recent)
-        )
-
-        row[f"max_{window}"] = int(
-            np.max(recent)
-        )
-
-    # --------------------------------------------------------
+    # ------------------------------------------------------------
     # Frequency
-    # --------------------------------------------------------
+    # ------------------------------------------------------------
 
-    for digit in range(10):
+    for w in windows:
 
-        row[
-            f"freq10_{digit}"
-        ] = (
-            np.sum(
-                history[-10:] == digit
-            )
-            if len(history) >= 10
-            else np.sum(
-                history == digit
-            )
+        h = hist[-w:]
+
+        counts = np.bincount(
+            h,
+            minlength=10
         )
 
-        row[
-            f"freq20_{digit}"
-        ] = (
-            np.sum(
-                history[-20:] == digit
+        for d in range(10):
+
+            f[f"freq_{w}_{d}"] = (
+                counts[d] / max(len(h), 1)
             )
-            if len(history) >= 20
-            else np.sum(
-                history == digit
+
+
+    # ------------------------------------------------------------
+    # Last occurrence / GAP
+    # ------------------------------------------------------------
+
+    for d in range(10):
+
+        pos = np.where(
+            hist == d
+        )[0]
+
+        if len(pos):
+
+            gap = (
+                len(hist) - 1 - pos[-1]
             )
-        )
 
-    # --------------------------------------------------------
-    # Difference
-    # --------------------------------------------------------
+        else:
 
-    if len(history) >= 2:
+            gap = len(hist) + 5
 
-        row["diff1"] = int(
-            history[-1] -
-            history[-2]
-        )
+        f[f"gap_{d}"] = gap
 
-        row["absdiff1"] = abs(
-            row["diff1"]
+
+    # ------------------------------------------------------------
+    # Recent transitions
+    # ------------------------------------------------------------
+
+    if len(hist) >= 2:
+
+        f["delta_1"] = (
+            int(hist[-1])
+            -
+            int(hist[-2])
         )
 
     else:
 
-        row["diff1"] = 0
-        row["absdiff1"] = 0
+        f["delta_1"] = 0
 
-    # --------------------------------------------------------
-    # Digit properties
-    # --------------------------------------------------------
 
-    last = int(history[-1])
+    if len(hist) >= 3:
 
-    row["last_even"] = int(
-        last % 2 == 0
-    )
-
-    row["last_high"] = int(
-        last >= 5
-    )
-
-    row["last_prime"] = int(
-        last in [2, 3, 5, 7]
-    )
-
-    row["sum_recent5"] = int(
-        np.sum(history[-5:])
-    )
-
-    row["repeat_last"] = int(
-        np.sum(
-            history[-5:] == last
+        f["delta_2"] = (
+            int(hist[-1])
+            -
+            int(hist[-3])
         )
+
+    else:
+
+        f["delta_2"] = 0
+
+
+    # ------------------------------------------------------------
+    # Rolling statistics
+    # ------------------------------------------------------------
+
+    for w in windows:
+
+        h = hist[-w:]
+
+        f[f"mean_{w}"] = float(
+            np.mean(h)
+        )
+
+        f[f"std_{w}"] = float(
+            np.std(h)
+        )
+
+        f[f"min_{w}"] = float(
+            np.min(h)
+        )
+
+        f[f"max_{w}"] = float(
+            np.max(h)
+        )
+
+        f[f"sum_{w}"] = float(
+            np.sum(h)
+        )
+
+
+    # ------------------------------------------------------------
+    # Digit parity
+    # ------------------------------------------------------------
+
+    f["last_even"] = (
+        int(hist[-1] % 2 == 0)
     )
 
-    return pd.DataFrame([row])
+    f["last_high"] = (
+        int(hist[-1] >= 5)
+    )
+
+    # ------------------------------------------------------------
+    # Date features
+    # ------------------------------------------------------------
+
+    # idx based proxy
+    f["index_mod_7"] = idx % 7
+    f["index_mod_10"] = idx % 10
+
+    return f
 
 
-# ============================================================
-# CREATE TRAINING DATA
-# ============================================================
+# ================================================================
+# BUILD DATASET
+# ================================================================
 
-def create_training_data(
-    series,
-    lag=5
+def build_position_dataset(
+    series
 ):
 
-    series = np.asarray(
-        series,
-        dtype=int
-    )
-
     rows = []
-    targets = []
+    y = []
 
-    for i in range(lag, len(series)):
+    for i in range(
+        len(series)
+    ):
 
-        history = series[:i]
-
-        feature = make_feature_row(
-            history,
-            lag
+        features = digit_features(
+            series,
+            i
         )
 
-        if feature is None:
+        if features is None:
             continue
 
-        rows.append(
-            feature.iloc[0].to_dict()
-        )
+        # Need sufficient history
+        if i < 10:
+            continue
 
-        targets.append(
+        rows.append(features)
+
+        y.append(
             int(series[i])
         )
 
@@ -875,11 +1141,36 @@ def create_training_data(
 
         return None, None
 
-    X = pd.DataFrame(rows)
+    X = pd.DataFrame(
+        rows
+    ).replace(
+        [np.inf, -np.inf],
+        np.nan
+    ).fillna(0)
 
-    y = pd.Series(
-        targets,
+    y = np.asarray(
+        y,
         dtype=int
+    )
+
+    return X, y
+
+
+# ================================================================
+# NEXT DRAW FEATURE
+# ================================================================
+
+def build_next_features(
+    series
+):
+
+    features = digit_features(
+        series,
+        len(series)
+    )
+
+    X = pd.DataFrame(
+        [features]
     )
 
     X = X.replace(
@@ -887,498 +1178,136 @@ def create_training_data(
         np.nan
     ).fillna(0)
 
-    return X, y
+    return X
 
 
-# ============================================================
-# 8. PROBABILITY ALIGN
-# ============================================================
+# ================================================================
+# MODEL FACTORY
+# ================================================================
 
-def align_probability(
-    model,
-    prob
-):
+def make_models():
 
-    output = np.zeros(10)
+    models = {
 
-    try:
-
-        for idx, cls in enumerate(
-            model.classes_
-        ):
-
-            cls = int(cls)
-
-            if 0 <= cls <= 9:
-
-                output[cls] = prob[idx]
-
-    except Exception:
-        pass
-
-    total = output.sum()
-
-    if total > 0:
-
-        output /= total
-
-    else:
-
-        output[:] = 0.1
-
-    return output
-
-
-# ============================================================
-# 9. STATISTICAL MODEL
-# ============================================================
-
-class StatisticalModel:
-
-    def fit(self, history):
-
-        history = np.asarray(
-            history,
-            dtype=int
-        )
-
-        self.history = history
-
-        # frequency
-        counts = np.bincount(
-            history,
-            minlength=10
-        ).astype(float)
-
-        self.freq = (
-            counts + 1
-        ) / (
-            counts.sum() + 10
-        )
-
-        # Markov
-        matrix = np.ones(
-            (10, 10)
-        )
-
-        for i in range(
-            len(history) - 1
-        ):
-
-            a = int(history[i])
-            b = int(history[i + 1])
-
-            matrix[a, b] += 1
-
-        matrix /= matrix.sum(
-            axis=1,
-            keepdims=True
-        )
-
-        self.markov = matrix
-
-    def predict_proba(self):
-
-        last = int(
-            self.history[-1]
-        )
-
-        markov_prob = (
-            self.markov[last]
-        )
-
-        # recent frequency
-        recent = self.history[-20:]
-
-        recent_count = np.bincount(
-            recent,
-            minlength=10
-        ).astype(float)
-
-        recent_freq = (
-            recent_count + 1
-        ) / (
-            recent_count.sum() + 10
-        )
-
-        prob = (
-            0.35 * self.freq
-            +
-            0.40 * recent_freq
-            +
-            0.25 * markov_prob
-        )
-
-        prob /= prob.sum()
-
-        return prob
-
-
-# ============================================================
-# 10. EQUATION ENGINE
-# ============================================================
-
-class EquationEngine:
-
-    def predict_proba(
-        self,
-        history
-    ):
-
-        history = np.asarray(
-            history,
-            dtype=int
-        )
-
-        scores = np.ones(10) * 0.001
-
-        # ----------------------------------------------------
-        # 1. Recent frequency
-        # ----------------------------------------------------
-
-        recent10 = history[-10:]
-
-        for d in range(10):
-
-            scores[d] += (
-                np.sum(
-                    recent10 == d
-                ) * 0.10
-            )
-
-        # ----------------------------------------------------
-        # 2. Gap
-        # ----------------------------------------------------
-
-        for d in range(10):
-
-            positions = np.where(
-                history == d
-            )[0]
-
-            if len(positions) == 0:
-
-                gap = len(history)
-
-            else:
-
-                gap = (
-                    len(history)
-                    - 1
-                    - positions[-1]
-                )
-
-            # diminishing gap effect
-            scores[d] += min(
-                gap,
-                20
-            ) * 0.015
-
-        # ----------------------------------------------------
-        # 3. Last transition
-        # ----------------------------------------------------
-
-        if len(history) >= 2:
-
-            last = int(history[-1])
-
-            prev = int(history[-2])
-
-            diff = (
-                last - prev
-            ) % 10
-
-            for d in range(10):
-
-                if (
-                    (d - last) % 10
-                    == diff
-                ):
-
-                    scores[d] += 0.15
-
-        # ----------------------------------------------------
-        # 4. Reversal
-        # ----------------------------------------------------
-
-        last = int(history[-1])
-
-        reverse = 9 - last
-
-        scores[reverse] += 0.08
-
-        # ----------------------------------------------------
-        # 5. Last 3 pattern
-        # ----------------------------------------------------
-
-        if len(history) >= 3:
-
-            a = int(history[-3])
-            b = int(history[-2])
-            c = int(history[-1])
-
-            d1 = (b - a) % 10
-            d2 = (c - b) % 10
-
-            next_digit = (
-                c + (d2 - d1)
-            ) % 10
-
-            scores[next_digit] += 0.20
-
-        scores = np.maximum(
-            scores,
-            0.0001
-        )
-
-        scores /= scores.sum()
-
-        return scores
-
-
-# ============================================================
-# 11. ML MODELS
-# ============================================================
-
-def train_ml_models(
-    X,
-    y
-):
-
-    models = {}
-
-    # --------------------------------------------------------
-    # ExtraTrees
-    # --------------------------------------------------------
-
-    et = ExtraTreesClassifier(
-        n_estimators=80,
-        max_depth=8,
-        min_samples_leaf=2,
-        random_state=42,
-        n_jobs=-1,
-        class_weight="balanced"
-    )
-
-    et.fit(X, y)
-
-    models["et"] = et
-
-    # --------------------------------------------------------
-    # HGB
-    # --------------------------------------------------------
-
-    hgb = HistGradientBoostingClassifier(
-        max_iter=60,
-        max_leaf_nodes=15,
-        learning_rate=0.06,
-        l2_regularization=0.5,
-        random_state=42
-    )
-
-    hgb.fit(X, y)
-
-    models["hgb"] = hgb
-
-    # --------------------------------------------------------
-    # XGBoost
-    # --------------------------------------------------------
-
-    if XGB_AVAILABLE:
-
-        unique_classes = np.sort(
-            y.unique()
-        )
-
-        # XGBoost multi-class
-        if len(unique_classes) >= 2:
-
-            xgb = XGBClassifier(
-
-                n_estimators=60,
-
-                max_depth=5,
-
-                learning_rate=0.06,
-
-                subsample=0.9,
-
-                colsample_bytree=0.9,
-
-                objective="multi:softprob",
-
-                num_class=10,
-
-                eval_metric="mlogloss",
-
+        "ExtraTrees":
+            ExtraTreesClassifier(
+                n_estimators=160,
+                max_depth=8,
+                min_samples_leaf=2,
                 random_state=42,
-
                 n_jobs=-1,
+                class_weight="balanced"
+            ),
 
-                verbosity=0
-            )
+        "HistGradientBoosting":
+            HistGradientBoostingClassifier(
+                max_iter=120,
+                learning_rate=0.06,
+                max_leaf_nodes=15,
+                l2_regularization=0.5,
+                random_state=42
+            ),
 
-            try:
+        "GaussianNB":
+            GaussianNB()
+    }
 
-                xgb.fit(
-                    X,
-                    y
-                )
 
-                models["xgb"] = xgb
+    if use_xgb and XGB_AVAILABLE:
 
-            except Exception:
-                pass
+        models["XGBoost"] = XGBClassifier(
+            n_estimators=120,
+            max_depth=5,
+            learning_rate=0.05,
+            subsample=0.85,
+            colsample_bytree=0.85,
+            objective="multi:softprob",
+            eval_metric="mlogloss",
+            random_state=42,
+            n_jobs=2
+        )
 
     return models
 
 
-# ============================================================
-# ML PREDICTION
-# ============================================================
+# ================================================================
+# ALIGN PROBABILITY
+# ================================================================
 
-def predict_ml(
-    models,
-    X_next
+def aligned_probability(
+    model,
+    X
 ):
 
-    probabilities = {}
+    p = model.predict_proba(X)
 
-    for name, model in models.items():
+    result = np.zeros(
+        (len(X), 10),
+        dtype=float
+    )
+
+    classes = getattr(
+        model,
+        "classes_",
+        []
+    )
+
+    for j, cls in enumerate(classes):
 
         try:
 
-            raw = model.predict_proba(
-                X_next
-            )[0]
+            d = int(cls)
 
-            probabilities[name] = (
-                align_probability(
-                    model,
-                    raw
-                )
-            )
+            if 0 <= d <= 9:
+
+                result[:, d] = p[:, j]
 
         except Exception:
+            pass
 
-            probabilities[name] = (
-                np.ones(10) / 10
-            )
-
-    return probabilities
-
-
-# ============================================================
-# 12. SINGLE MODEL PREDICTION
-# ============================================================
-
-def predict_all_models(
-    history,
-    lag=5
-):
-
-    history = np.asarray(
-        history,
-        dtype=int
+    # normalize
+    s = result.sum(
+        axis=1,
+        keepdims=True
     )
 
-    if len(history) < lag + 10:
-
-        return None
-
-    X, y = create_training_data(
-        history,
-        lag
-    )
-
-    if X is None or len(y) < 20:
-
-        return None
-
-    # Train all available data
-    models = train_ml_models(
-        X,
-        y
-    )
-
-    # Next feature
-    X_next = make_feature_row(
-        history,
-        lag
-    )
-
-    if X_next is None:
-        return None
-
-    ml_probs = predict_ml(
-        models,
-        X_next
-    )
-
-    # STAT
-    stat_model = StatisticalModel()
-
-    stat_model.fit(
-        history
-    )
-
-    prob_stat = (
-        stat_model.predict_proba()
-    )
-
-    # EQUATION
-    equation = EquationEngine()
-
-    prob_eq = equation.predict_proba(
-        history
-    )
-
-    result = {
-
-        "stat": prob_stat,
-
-        "equation": prob_eq
-    }
-
-    result.update(
-        ml_probs
+    result = np.divide(
+        result,
+        s,
+        out=np.ones_like(result) / 10,
+        where=s > 0
     )
 
     return result
 
 
-# ============================================================
-# 13. TOP N
-# ============================================================
+# ================================================================
+# TOP K
+# ================================================================
 
 def top_digits(
-    probability,
-    n=3
+    probabilities,
+    k=3
 ):
 
     order = np.argsort(
-        probability
+        probabilities
     )[::-1]
 
     return [
-        (
-            int(d),
-            float(
-                probability[d]
-            )
-        )
-        for d in order[:n]
+        int(x)
+        for x in order[:k]
     ]
 
 
-# ============================================================
-# 14. WALK FORWARD BACKTEST
-# ============================================================
+# ================================================================
+# WALK FORWARD BACKTEST
+# ================================================================
 
 def walk_forward_backtest(
     series,
-    lag=5,
-    test_size=30
+    max_tests=25,
+    min_train=40
 ):
 
     series = np.asarray(
@@ -1386,568 +1315,760 @@ def walk_forward_backtest(
         dtype=int
     )
 
-    model_names = [
-        "stat",
-        "equation",
-        "et",
-        "hgb"
-    ]
+    n = len(series)
 
-    if XGB_AVAILABLE:
-        model_names.append(
-            "xgb"
-        )
+    if n < min_train + 5:
 
-    hits_top1 = {
-        name: 0
-        for name in model_names
-    }
-
-    hits_top3 = {
-        name: 0
-        for name in model_names
-    }
-
-    total = 0
-
-    # ต้องมี training พอสมควร
-    minimum_train = max(
-        35,
-        lag + 20
-    )
+        return pd.DataFrame()
 
     start = max(
-        minimum_train,
-        len(series) - test_size
+        min_train,
+        n - max_tests
     )
 
-    for target_index in range(
+    records = []
+
+    models_names = list(
+        make_models().keys()
+    )
+
+    for test_i in range(
         start,
-        len(series)
+        n
     ):
 
-        history = series[
-            :target_index
+        # --------------------------------------------------------
+        # TRAIN DATA
+        # --------------------------------------------------------
+
+        train_series = series[
+            :test_i
         ]
 
+        X_train, y_train = build_position_dataset(
+            train_series
+        )
+
+        if X_train is None:
+            continue
+
         actual = int(
-            series[target_index]
+            series[test_i]
         )
 
-        if len(history) < minimum_train:
+        # --------------------------------------------------------
+        # Must have multiple classes
+        # --------------------------------------------------------
+
+        if len(
+            np.unique(y_train)
+        ) < 2:
+
             continue
 
-        try:
+        for model_name in models_names:
 
-            predictions = (
-                predict_all_models(
-                    history,
-                    lag
+            models = make_models()
+
+            model = models[
+                model_name
+            ]
+
+            try:
+
+                model.fit(
+                    X_train,
+                    y_train
                 )
-            )
 
-            if predictions is None:
-                continue
+                X_test = build_next_features(
+                    train_series
+                )
 
-            total += 1
+                prob = aligned_probability(
+                    model,
+                    X_test
+                )[0]
 
-            for name in model_names:
+                top1 = top_digits(
+                    prob,
+                    1
+                )
 
-                if name not in predictions:
-                    continue
+                top3 = top_digits(
+                    prob,
+                    3
+                )
 
-                probs = predictions[name]
+                records.append({
+                    "test_index": test_i,
+                    "model": model_name,
+                    "actual": actual,
+                    "top1": top1[0],
+                    "top3": top3,
+                    "hit_top1": int(
+                        actual == top1[0]
+                    ),
+                    "hit_top3": int(
+                        actual in top3
+                    )
+                })
 
-                order = np.argsort(
-                    probs
-                )[::-1]
+            except Exception as e:
 
-                if int(order[0]) == actual:
-
-                    hits_top1[name] += 1
-
-                if actual in order[:3]:
-
-                    hits_top3[name] += 1
-
-        except Exception:
-            continue
-
-    if total == 0:
-        return None
-
-    results = []
-
-    for name in model_names:
-
-        top1 = (
-            hits_top1[name]
-            / total
-        )
-
-        top3 = (
-            hits_top3[name]
-            / total
-        )
-
-        results.append({
-
-            "Model": name,
-
-            "TOP-1":
-                round(
-                    top1 * 100,
-                    2
-                ),
-
-            "TOP-3":
-                round(
-                    top3 * 100,
-                    2
-                ),
-
-            "Test": total,
-
-            "_top1":
-                top1,
-
-            "_top3":
-                top3
-        })
+                records.append({
+                    "test_index": test_i,
+                    "model": model_name,
+                    "actual": actual,
+                    "top1": -1,
+                    "top3": [],
+                    "hit_top1": 0,
+                    "hit_top3": 0
+                })
 
     return pd.DataFrame(
-        results
+        records
     )
 
 
-# ============================================================
-# 15. ADAPTIVE WEIGHT
-# ============================================================
+# ================================================================
+# ADAPTIVE WEIGHTS
+# ================================================================
 
 def calculate_adaptive_weights(
-    backtest_df
+    bt
 ):
 
-    if (
-        backtest_df is None
-        or backtest_df.empty
-    ):
+    if bt is None or bt.empty:
 
-        return {}
+        return {
+            name: 1.0
+            for name in make_models()
+        }
 
-    weights = {}
 
-    for _, row in backtest_df.iterrows():
+    scores = {}
 
-        name = row["Model"]
+    for model_name in bt["model"].unique():
 
-        top3 = float(
-            row["_top3"]
+        sub = bt[
+            bt["model"] == model_name
+        ]
+
+        if len(sub) == 0:
+            continue
+
+        top3_acc = (
+            sub["hit_top3"].mean()
         )
 
-        top1 = float(
-            row["_top1"]
+        top1_acc = (
+            sub["hit_top1"].mean()
         )
 
-        # TOP3 สำคัญกว่า TOP1
+        # top3 is primary
         score = (
-            0.65 * top3
+            0.70 * top3_acc
             +
-            0.35 * top1
+            0.30 * top1_acc
         )
 
-        # กัน weight = 0
-        weights[name] = max(
-            score,
+        # small floor prevents zero weight
+        scores[model_name] = max(
+            float(score),
             0.01
         )
 
-    total = sum(
-        weights.values()
-    )
 
-    if total <= 0:
-
-        equal = (
-            1 / len(weights)
-        )
+    if not scores:
 
         return {
-            k: equal
-            for k in weights
+            name: 1.0
+            for name in make_models()
         }
+
+
+    total = sum(
+        scores.values()
+    )
 
     weights = {
         k: v / total
-        for k, v in weights.items()
+        for k, v in scores.items()
     }
 
     return weights
 
 
-# ============================================================
-# 16. ENSEMBLE
-# ============================================================
+# ================================================================
+# ENSEMBLE PREDICTION
+# ================================================================
 
-def ensemble_probability(
-    predictions,
+def ensemble_predict(
+    series,
     weights
 ):
 
-    final = np.zeros(10)
+    X_train, y_train = build_position_dataset(
+        series
+    )
 
-    used_weight = 0
+    X_next = build_next_features(
+        series
+    )
 
-    for name, weight in weights.items():
+    if X_train is None:
 
-        if name not in predictions:
+        return None
+
+    if len(
+        np.unique(y_train)
+    ) < 2:
+
+        return None
+
+    models = make_models()
+
+    final_prob = np.zeros(
+        10,
+        dtype=float
+    )
+
+    details = {}
+
+    for name, model in models.items():
+
+        if name not in weights:
             continue
 
-        final += (
-            weight
-            * predictions[name]
-        )
+        try:
 
-        used_weight += weight
+            model.fit(
+                X_train,
+                y_train
+            )
 
-    if used_weight <= 0:
+            prob = aligned_probability(
+                model,
+                X_next
+            )[0]
 
-        final[:] = 0.1
+            w = weights.get(
+                name,
+                0
+            )
 
-    else:
+            final_prob += (
+                w * prob
+            )
 
-        final /= used_weight
+            details[name] = {
+                "weight": w,
+                "prob": prob
+            }
 
-    final = np.maximum(
-        final,
-        0
-    )
+        except Exception as e:
 
-    final /= final.sum()
-
-    return final
+            details[name] = {
+                "weight": 0,
+                "error": str(e)
+            }
 
 
-# ============================================================
-# 17. DISPLAY DATA QUALITY
-# ============================================================
+    # normalize
+    total = final_prob.sum()
 
-def show_data_quality(
-    stats,
-    df
+    if total > 0:
+
+        final_prob /= total
+
+    return {
+        "prob": final_prob,
+        "top3": top_digits(
+            final_prob,
+            3
+        ),
+        "top5": top_digits(
+            final_prob,
+            5
+        ),
+        "details": details
+    }
+
+
+# ================================================================
+# POSITION ANALYSIS
+# ================================================================
+
+def analyze_position(
+    series,
+    position_name
 ):
 
-    st.subheader(
-        "🔎 ตรวจสอบคุณภาพข้อมูล"
+    series = np.asarray(
+        series,
+        dtype=int
     )
 
-    c1, c2, c3, c4, c5 = st.columns(5)
+    # ------------------------------------------------------------
+    # Backtest
+    # ------------------------------------------------------------
 
-    c1.metric(
-        "ข้อมูลที่พบ",
-        stats.get(
-            "raw",
-            len(df)
-        )
+    bt = walk_forward_backtest(
+        series,
+        max_tests=backtest_n,
+        min_train=min_history
     )
 
-    c2.metric(
-        "ผ่านตรวจสอบ",
-        stats.get(
-            "valid",
-            len(df)
-        )
+    weights = calculate_adaptive_weights(
+        bt
     )
 
-    c3.metric(
-        "ข้อมูลซ้ำ",
-        stats.get(
-            "duplicates",
-            0
-        )
-    )
-
-    c4.metric(
-        "ผิดรูปแบบ",
-        stats.get(
-            "invalid",
-            0
-        )
-    )
-
-    if not df.empty:
-
-        date_range = (
-            f"{df['Date'].min()} → "
-            f"{df['Date'].max()}"
-        )
-
-    else:
-
-        date_range = "-"
-
-    c5.metric(
-        "ช่วงวันที่",
-        date_range
-    )
-
-
-# ============================================================
-# 18. DISPLAY PREDICTION
-# ============================================================
-
-def show_prediction(
-    history,
-    position_name,
-    predictions,
-    weights
-):
-
-    final_prob = ensemble_probability(
-        predictions,
+    prediction = ensemble_predict(
+        series,
         weights
     )
 
-    top = top_digits(
-        final_prob,
-        TOP_N
+    # ------------------------------------------------------------
+    # Frequency
+    # ------------------------------------------------------------
+
+    counts = np.bincount(
+        series,
+        minlength=10
     )
 
-    rows = []
-
-    for rank, (
-        digit,
-        probability
-    ) in enumerate(
-        top,
-        start=1
-    ):
-
-        rows.append({
-
-            "อันดับ":
-                rank,
-
-            "เลข":
-                digit,
-
-            "โอกาสเชิงโมเดล (%)":
-                round(
-                    probability * 100,
-                    2
-                )
-        })
-
-    top_df = pd.DataFrame(
-        rows
+    freq = (
+        counts / len(series)
     )
 
-    st.markdown(
-        f"### 🎯 TOP-{TOP_N} {position_name}"
+    # ------------------------------------------------------------
+    # Recent frequency
+    # ------------------------------------------------------------
+
+    recent = series[-20:]
+
+    recent_counts = np.bincount(
+        recent,
+        minlength=10
     )
 
-    st.dataframe(
-        top_df,
-        hide_index=True,
-        use_container_width=True
+    recent_freq = (
+        recent_counts
+        /
+        max(len(recent), 1)
     )
 
-    # Full 0-9
-    full_df = pd.DataFrame({
+    # ------------------------------------------------------------
+    # Gap
+    # ------------------------------------------------------------
 
-        "เลข":
-            range(10),
+    gaps = {}
 
-        "Probability (%)":
-            np.round(
-                final_prob * 100,
-                2
-            )
-    })
+    for d in range(10):
 
-    full_df = full_df.sort_values(
-        "Probability (%)",
-        ascending=False
-    ).reset_index(drop=True)
+        pos = np.where(
+            series == d
+        )[0]
 
-    st.bar_chart(
-        full_df.set_index("เลข")
-    )
+        if len(pos):
 
-    # --------------------------------------------------------
-    # Model comparison
-    # --------------------------------------------------------
-
-    model_rows = []
-
-    for name, prob in predictions.items():
-
-        top1 = int(
-            np.argmax(prob)
-        )
-
-        top3 = [
-            int(x)
-            for x in np.argsort(
-                prob
-            )[::-1][:3]
-        ]
-
-        model_rows.append({
-
-            "Model":
-                name,
-
-            "TOP-1":
-                top1,
-
-            "TOP-3":
-                ", ".join(
-                    map(
-                        str,
-                        top3
-                    )
-                ),
-
-            "Weight (%)":
-                round(
-                    weights.get(
-                        name,
-                        0
-                    ) * 100,
-                    2
-                )
-        })
-
-    st.dataframe(
-        pd.DataFrame(model_rows),
-        hide_index=True,
-        use_container_width=True
-    )
-
-    return final_prob
-
-
-# ============================================================
-# 19. MAIN
-# ============================================================
-
-def main():
-
-    st.title(
-        "🎯 LOTTO AI V2.0"
-    )
-
-    st.markdown(
-        """
-        **Main Article Scraper + MongoDB Upsert + 
-        Walk-Forward Backtest + Adaptive Ensemble + TOP-3**
-        """
-    )
-
-    # --------------------------------------------------------
-    # Sidebar
-    # --------------------------------------------------------
-
-    st.sidebar.header(
-        "⚙️ ตั้งค่าระบบ"
-    )
-
-    lottery_type = st.sidebar.selectbox(
-        "เลือกประเภทหวย",
-        list(
-            LOTTERY_SOURCES.keys()
-        )
-    )
-
-    source_url = (
-        LOTTERY_SOURCES[
-            lottery_type
-        ]
-    )
-
-    lag = st.sidebar.slider(
-        "จำนวน Lag",
-        min_value=3,
-        max_value=10,
-        value=5
-    )
-
-    backtest_size = st.sidebar.slider(
-        "จำนวนงวด Backtest",
-        min_value=10,
-        max_value=50,
-        value=DEFAULT_BACKTEST
-    )
-
-    use_mongo = st.sidebar.checkbox(
-        "ใช้ MongoDB",
-        value=True
-    )
-
-    # --------------------------------------------------------
-    # Mongo
-    # --------------------------------------------------------
-
-    db = None
-
-    if use_mongo:
-
-        db = init_mongo_connection()
-
-        if db is not None:
-
-            st.sidebar.success(
-                "🟢 MongoDB Connected"
+            gaps[d] = (
+                len(series)
+                -
+                1
+                -
+                pos[-1]
             )
 
         else:
 
-            st.sidebar.warning(
-                "🟡 MongoDB ไม่พร้อมใช้งาน"
+            gaps[d] = len(series)
+
+
+    # ------------------------------------------------------------
+    # Probability table
+    # ------------------------------------------------------------
+
+    table = pd.DataFrame({
+        "เลข": range(10),
+        "ความถี่ทั้งหมด": np.round(
+            freq * 100,
+            2
+        ),
+        "ความถี่ 20 งวด": np.round(
+            recent_freq * 100,
+            2
+        ),
+        "Gap": [
+            gaps[d]
+            for d in range(10)
+        ]
+    })
+
+
+    if prediction:
+
+        table["AI Probability"] = np.round(
+            prediction["prob"] * 100,
+            2
+        )
+
+    else:
+
+        table["AI Probability"] = 10.0
+
+
+    table = table.sort_values(
+        "AI Probability",
+        ascending=False
+    ).reset_index(
+        drop=True
+    )
+
+
+    return {
+        "position": position_name,
+        "backtest": bt,
+        "weights": weights,
+        "prediction": prediction,
+        "table": table
+    }
+
+
+# ================================================================
+# FULL ANALYSIS
+# ================================================================
+
+def run_analysis(df):
+
+    results = {}
+
+    # ------------------------------------------------------------
+    # 3 DIGIT
+    # ------------------------------------------------------------
+
+    three = (
+        df["three"]
+        .astype(str)
+        .str.zfill(3)
+    )
+
+    for i in range(3):
+
+        pos = f"3D-{i+1}"
+
+        series = np.array([
+            int(x[i])
+            for x in three
+        ])
+
+        results[pos] = analyze_position(
+            series,
+            pos
+        )
+
+
+    # ------------------------------------------------------------
+    # 2 DIGIT
+    # ------------------------------------------------------------
+
+    two = (
+        df["two"]
+        .astype(str)
+        .str.zfill(2)
+    )
+
+    for i in range(2):
+
+        pos = f"2D-{i+1}"
+
+        series = np.array([
+            int(x[i])
+            for x in two
+        ])
+
+        results[pos] = analyze_position(
+            series,
+            pos
+        )
+
+
+    return results
+
+
+# ================================================================
+# DISPLAY BACKTEST
+# ================================================================
+
+def show_backtest(
+    result
+):
+
+    bt = result["backtest"]
+
+    if bt is None or bt.empty:
+
+        st.warning(
+            "ข้อมูลยังไม่พอสำหรับ Backtest"
+        )
+
+        return
+
+
+    summary = (
+        bt.groupby("model")
+        .agg(
+            งวด=("actual", "count"),
+            TOP1=(
+                "hit_top1",
+                "mean"
+            ),
+            TOP3=(
+                "hit_top3",
+                "mean"
             )
+        )
+        .reset_index()
+    )
 
-    # --------------------------------------------------------
-    # Buttons
-    # --------------------------------------------------------
+    summary["TOP1"] = (
+        summary["TOP1"] * 100
+    ).round(2)
 
-    col_a, col_b = st.columns(2)
+    summary["TOP3"] = (
+        summary["TOP3"] * 100
+    ).round(2)
 
-    with col_a:
+    st.dataframe(
+        summary,
+        use_container_width=True,
+        hide_index=True
+    )
 
-        update_web = st.button(
-            "🌐 ดึงข้อมูลใหม่จากเว็บ",
-            use_container_width=True
+
+# ================================================================
+# DISPLAY PREDICTION
+# ================================================================
+
+def show_prediction(
+    result
+):
+
+    pred = result["prediction"]
+
+    if not pred:
+
+        st.warning(
+            "ไม่สามารถสร้าง Prediction ได้"
         )
 
-    with col_b:
+        return
 
-        load_db = st.button(
-            "🗄️ โหลดจาก MongoDB",
-            use_container_width=True
+    top3 = pred["top3"]
+
+    st.subheader(
+        f"🎯 {result['position']}"
+    )
+
+    cols = st.columns(3)
+
+    for i, digit in enumerate(top3):
+
+        probability = (
+            pred["prob"][digit]
+            * 100
         )
 
-    # --------------------------------------------------------
-    # Data
-    # --------------------------------------------------------
+        cols[i].metric(
+            f"อันดับ {i+1}",
+            str(digit),
+            f"{probability:.2f}%"
+        )
 
-    df = None
-    stats = {}
+    st.write(
+        "TOP-3:",
+        " • ".join(
+            str(x)
+            for x in top3
+        )
+    )
 
-    # --------------------------------------------------------
-    # WEB
-    # --------------------------------------------------------
+    # model weights
+    weights = result["weights"]
 
-    if update_web:
+    weight_df = pd.DataFrame({
+        "Model": list(
+            weights.keys()
+        ),
+        "Adaptive Weight": [
+            round(
+                x * 100,
+                2
+            )
+            for x in weights.values()
+        ]
+    })
 
-        with st.spinner(
-            "กำลังอ่านเฉพาะ Main Article..."
+    with st.expander(
+        "⚖️ Adaptive Model Weights"
+    ):
+
+        st.dataframe(
+            weight_df,
+            use_container_width=True,
+            hide_index=True
+        )
+
+
+# ================================================================
+# DATA QUALITY
+# ================================================================
+
+def show_data_quality(
+    df,
+    debug
+):
+
+    st.subheader(
+        "🔎 Data Quality"
+    )
+
+    ok, report = validate_data(
+        df
+    )
+
+    c1, c2, c3, c4 = st.columns(4)
+
+    c1.metric(
+        "จำนวนข้อมูล",
+        report.get(
+            "rows",
+            0
+        )
+    )
+
+    c2.metric(
+        "วันที่เริ่ม",
+        str(
+            report.get(
+                "date_min",
+                "-"
+            )
+        )[:10]
+    )
+
+    c3.metric(
+        "วันที่ล่าสุด",
+        str(
+            report.get(
+                "date_max",
+                "-"
+            )
+        )[:10]
+    )
+
+    c4.metric(
+        "Duplicate",
+        report.get(
+            "duplicate_dates",
+            0
+        )
+    )
+
+    if ok:
+
+        st.success(
+            "✅ ข้อมูลผ่านการตรวจสอบ"
+        )
+
+    else:
+
+        st.warning(
+            "⚠️ ข้อมูลมีปัญหาบางส่วน"
+        )
+
+    if show_debug:
+
+        with st.expander(
+            "🛠️ Scraper Debug"
         ):
 
-            df, stats = scrape_lottery(
-                lottery_type,
-                source_url
+            st.json(
+                {
+                    k: str(v)
+                    for k, v in debug.items()
+                    if k != "sample"
+                }
             )
+
+            if "sample" in debug:
+
+                st.text(
+                    debug["sample"]
+                )
+
+
+# ================================================================
+# LOAD DATA
+# ================================================================
+
+st.divider()
+
+col1, col2, col3 = st.columns(3)
+
+
+# ================================================================
+# BUTTON: SCRAPE
+# ================================================================
+
+with col1:
+
+    scrape_btn = st.button(
+        "🌐 ดึงข้อมูลใหม่จากเว็บ",
+        use_container_width=True
+    )
+
+
+# ================================================================
+# BUTTON: MONGO
+# ================================================================
+
+with col2:
+
+    mongo_btn = st.button(
+        "🗄️ โหลดจาก MongoDB",
+        use_container_width=True
+    )
+
+
+# ================================================================
+# BUTTON: ANALYZE
+# ================================================================
+
+with col3:
+
+    analyze_btn = st.button(
+        "🚀 วิเคราะห์ AI",
+        use_container_width=True
+    )
+
+
+# ================================================================
+# SCRAPE
+# ================================================================
+
+if scrape_btn:
+
+    with st.spinner(
+        "กำลังดึงข้อมูลจาก Blogger..."
+    ):
+
+        df, debug = scrape_lottery(
+            lottery_type
+        )
+
+        st.session_state.scraper_debug = debug
 
         if df is None:
 
@@ -1955,548 +2076,263 @@ def main():
                 "❌ ดึงข้อมูลไม่สำเร็จ"
             )
 
-            if "error" in stats:
-
-                st.code(
-                    stats["error"]
-                )
-
-            st.stop()
-
-        show_data_quality(
-            stats,
-            df
-        )
-
-        # Save Mongo
-        if db is not None:
-
-            ok, message = (
-                save_to_mongo(
-                    lottery_type,
-                    df,
-                    db
-                )
-            )
-
-            if ok:
-
-                st.success(
-                    f"🗄️ MongoDB: {message}"
-                )
-
-            else:
-
-                st.warning(
-                    f"MongoDB: {message}"
-                )
-
-    # --------------------------------------------------------
-    # MONGO
-    # --------------------------------------------------------
-
-    elif load_db:
-
-        if db is None:
-
             st.error(
-                "❌ MongoDB ไม่พร้อมใช้งาน"
+                "ไม่พบข้อมูลรูปแบบ "
+                "วันที่ | 3 ตัว | 2 ตัว"
             )
 
-            st.stop()
+            if show_debug:
 
-        df = load_from_mongo(
-            lottery_type,
-            db
-        )
-
-        if df is None:
-
-            st.warning(
-                "ไม่พบข้อมูลใน MongoDB"
-            )
-
-            st.info(
-                "กรุณากด "
-                "🌐 ดึงข้อมูลใหม่จากเว็บ"
-            )
-
-            st.stop()
-
-        stats = {
-
-            "raw": len(df),
-
-            "valid": len(df),
-
-            "duplicates": 0,
-
-            "invalid": 0
-        }
-
-        show_data_quality(
-            stats,
-            df
-        )
-
-    # --------------------------------------------------------
-    # AUTO LOAD
-    # --------------------------------------------------------
-
-    else:
-
-        if db is not None:
-
-            df = load_from_mongo(
-                lottery_type,
-                db
-            )
-
-        if df is None:
-
-            with st.spinner(
-                "ยังไม่มีข้อมูล กำลังดึงจากเว็บ..."
-            ):
-
-                df, stats = scrape_lottery(
-                    lottery_type,
-                    source_url
-                )
-
-            if df is None:
-
-                st.error(
-                    "❌ ไม่สามารถโหลดข้อมูลจริงได้"
-                )
-
-                st.stop()
-
-            if db is not None:
-
-                save_to_mongo(
-                    lottery_type,
-                    df,
-                    db
+                st.json(
+                    {
+                        k: str(v)
+                        for k, v
+                        in debug.items()
+                    }
                 )
 
         else:
 
-            stats = {
+            st.session_state.data = df
 
-                "raw": len(df),
-
-                "valid": len(df),
-
-                "duplicates": 0,
-
-                "invalid": 0
-            }
-
-        show_data_quality(
-            stats,
-            df
-        )
-
-    # --------------------------------------------------------
-    # Data Check
-    # --------------------------------------------------------
-
-    if df is None or df.empty:
-
-        st.error(
-            "❌ ไม่มีข้อมูลจริงสำหรับวิเคราะห์"
-        )
-
-        st.stop()
-
-    if len(df) < MIN_HISTORY:
-
-        st.error(
-            f"❌ ข้อมูลมีเพียง {len(df)} งวด "
-            f"ต้องการอย่างน้อย {MIN_HISTORY} งวด"
-        )
-
-        st.stop()
-
-    # --------------------------------------------------------
-    # Display latest
-    # --------------------------------------------------------
-
-    st.subheader(
-        f"📊 ข้อมูลย้อนหลัง — {lottery_type}"
-    )
-
-    display_cols = [
-        "Date",
-        "ThreeDigit",
-        "TwoDigit"
-    ]
-
-    st.dataframe(
-        df[
-            display_cols
-        ].tail(20),
-        hide_index=True,
-        use_container_width=True
-    )
-
-    # --------------------------------------------------------
-    # Main Prediction Button
-    # --------------------------------------------------------
-
-    if st.button(
-        "🚀 RUN AI NEXT DRAW",
-        type="primary",
-        use_container_width=True
-    ):
-
-        st.markdown(
-            "---"
-        )
-
-        st.header(
-            "🔮 วิเคราะห์งวดถัดไป"
-        )
-
-        st.caption(
-            f"ข้อมูลล่าสุด: "
-            f"{df['Date'].max()}"
-        )
-
-        # ====================================================
-        # POSITION
-        # ====================================================
-
-        positions = [
-
-            (
-                "Hundreds",
-                "หลักร้อย",
-                "ThreeDigit"
-            ),
-
-            (
-                "Tens",
-                "หลักสิบ",
-                "ThreeDigit"
-            ),
-
-            (
-                "Units",
-                "หลักหน่วย",
-                "ThreeDigit"
-            ),
-
-            (
-                "TwoTens",
-                "2 ตัวบน/หลักสิบ",
-                "TwoDigit"
-            ),
-
-            (
-                "TwoUnits",
-                "2 ตัวบน/หลักหน่วย",
-                "TwoDigit"
+            # save Mongo
+            success, msg = save_to_mongo(
+                df,
+                lottery_type
             )
-        ]
 
-        tabs = st.tabs(
-            [
-                p[1]
-                for p in positions
-            ]
-        )
-
-        for tab, (
-            col_name,
-            display_name,
-            source
-        ) in zip(
-            tabs,
-            positions
-        ):
-
-            with tab:
-
-                series = (
-                    df[col_name]
-                    .astype(int)
-                    .values
-                )
-
-                st.markdown(
-                    f"## 🎯 {display_name}"
-                )
-
-                # ------------------------------------------------
-                # BACKTEST
-                # ------------------------------------------------
-
-                with st.spinner(
-                    "กำลังทำ Walk-Forward Backtest..."
-                ):
-
-                    bt = (
-                        walk_forward_backtest(
-                            series,
-                            lag=lag,
-                            test_size=backtest_size
-                        )
-                    )
-
-                if bt is None:
-
-                    st.error(
-                        "Backtest ไม่สามารถทำได้"
-                    )
-
-                    continue
-
-                # ------------------------------------------------
-                # Backtest table
-                # ------------------------------------------------
-
-                st.markdown(
-                    "### 📈 Walk-Forward Backtest"
-                )
-
-                bt_display = bt[
-                    [
-                        "Model",
-                        "TOP-1",
-                        "TOP-3",
-                        "Test"
-                    ]
-                ].copy()
-
-                bt_display.columns = [
-                    "โมเดล",
-                    "TOP-1 (%)",
-                    "TOP-3 (%)",
-                    "จำนวนทดสอบ"
-                ]
-
-                st.dataframe(
-                    bt_display,
-                    hide_index=True,
-                    use_container_width=True
-                )
-
-                # ------------------------------------------------
-                # Adaptive weights
-                # ------------------------------------------------
-
-                weights = (
-                    calculate_adaptive_weights(
-                        bt
-                    )
-                )
-
-                weight_df = pd.DataFrame({
-
-                    "Model":
-                        list(weights.keys()),
-
-                    "Weight (%)":
-                        [
-                            round(
-                                v * 100,
-                                2
-                            )
-                            for v in weights.values()
-                        ]
-                })
-
-                st.markdown(
-                    "### ⚖️ Adaptive Model Weight"
-                )
-
-                st.dataframe(
-                    weight_df,
-                    hide_index=True,
-                    use_container_width=True
-                )
-
-                # ------------------------------------------------
-                # FINAL TRAIN + NEXT
-                # ------------------------------------------------
-
-                with st.spinner(
-                    "กำลัง Train ด้วยข้อมูลทั้งหมด "
-                    "และสร้าง X_NEXT..."
-                ):
-
-                    predictions = (
-                        predict_all_models(
-                            series,
-                            lag
-                        )
-                    )
-
-                if predictions is None:
-
-                    st.error(
-                        "ไม่สามารถสร้าง Prediction ได้"
-                    )
-
-                    continue
-
-                final_prob = show_prediction(
-                    series,
-                    display_name,
-                    predictions,
-                    weights
-                )
-
-                # ------------------------------------------------
-                # TOP 3
-                # ------------------------------------------------
-
-                top3 = top_digits(
-                    final_prob,
-                    3
-                )
+            if success:
 
                 st.success(
-                    "🔒 TOP-3 FINAL: "
-                    +
-                    " | ".join(
-                        [
-                            f"{d} "
-                            f"({p*100:.2f}%)"
-                            for d, p in top3
-                        ]
-                    )
+                    f"✅ ดึงข้อมูลสำเร็จ "
+                    f"{len(df):,} งวด | {msg}"
                 )
 
-                # ------------------------------------------------
-                # Recent history
-                # ------------------------------------------------
+            else:
 
-                recent = series[-10:]
-
-                history_df = pd.DataFrame({
-
-                    "งวดล่าสุดย้อนกลับ":
-                        range(
-                            len(recent),
-                            0,
-                            -1
-                        ),
-
-                    "เลข":
-                        recent
-                })
-
-                st.markdown(
-                    "### 📜 ประวัติ 10 งวดล่าสุด"
+                st.success(
+                    f"✅ ดึงข้อมูลสำเร็จ "
+                    f"{len(df):,} งวด"
                 )
 
-                st.dataframe(
-                    history_df,
-                    hide_index=True,
-                    use_container_width=True
-                )
+            show_data_quality(
+                df,
+                debug
+            )
 
-        # ====================================================
-        # SUMMARY
-        # ====================================================
 
-        st.markdown(
-            "---"
+# ================================================================
+# LOAD MONGO
+# ================================================================
+
+if mongo_btn:
+
+    with st.spinner(
+        "กำลังโหลด MongoDB..."
+    ):
+
+        df = load_from_mongo(
+            lottery_type
         )
 
-        st.header(
-            "📌 สรุป TOP-3 ทุกหลัก"
+        if df is None:
+
+            st.error(
+                "❌ ไม่พบข้อมูลใน MongoDB"
+            )
+
+            st.info(
+                "ให้กด 'ดึงข้อมูลใหม่จากเว็บ' ก่อน"
+            )
+
+        else:
+
+            st.session_state.data = df
+
+            st.success(
+                f"✅ โหลด MongoDB สำเร็จ "
+                f"{len(df):,} งวด"
+            )
+
+            show_data_quality(
+                df,
+                st.session_state.scraper_debug
+            )
+
+
+# ================================================================
+# SHOW CURRENT DATA
+# ================================================================
+
+df = st.session_state.data
+
+if df is not None:
+
+    st.divider()
+
+    st.subheader(
+        f"📋 ข้อมูล {lottery_type}"
+    )
+
+    st.dataframe(
+        df.tail(20)
+        .sort_values(
+            "date",
+            ascending=False
+        ),
+        use_container_width=True,
+        hide_index=True
+    )
+
+
+# ================================================================
+# ANALYZE
+# ================================================================
+
+if analyze_btn:
+
+    if df is None:
+
+        st.error(
+            "❌ ยังไม่มีข้อมูล "
+            "กรุณาดึงข้อมูลจากเว็บหรือ MongoDB ก่อน"
         )
 
-        summary_rows = []
+    elif len(df) < min_history:
 
-        for col_name, display_name, source in positions:
+        st.error(
+            f"❌ ข้อมูลมี {len(df)} งวด "
+            f"แต่กำหนดขั้นต่ำ {min_history} งวด"
+        )
 
-            series = (
-                df[col_name]
-                .astype(int)
-                .values
+    else:
+
+        with st.spinner(
+            "กำลังทำ Walk-Forward + Adaptive AI..."
+        ):
+
+            results = run_analysis(
+                df
             )
 
-            bt = (
-                walk_forward_backtest(
-                    series,
-                    lag=lag,
-                    test_size=backtest_size
-                )
-            )
+            st.session_state.prediction = results
 
-            if bt is None:
-                continue
+        st.success(
+            "✅ วิเคราะห์เสร็จแล้ว"
+        )
 
-            weights = (
-                calculate_adaptive_weights(
-                    bt
-                )
-            )
 
-            predictions = (
-                predict_all_models(
-                    series,
-                    lag
-                )
-            )
+# ================================================================
+# DISPLAY RESULTS
+# ================================================================
 
-            if predictions is None:
-                continue
+results = st.session_state.prediction
 
-            final_prob = (
-                ensemble_probability(
-                    predictions,
-                    weights
-                )
-            )
+if results:
 
-            top3 = top_digits(
-                final_prob,
-                3
-            )
+    st.divider()
+
+    st.header(
+        "🔮 ผลวิเคราะห์ TOP-3 ทุกหลัก"
+    )
+
+    # ------------------------------------------------------------
+    # Prediction summary
+    # ------------------------------------------------------------
+
+    summary_rows = []
+
+    for pos, result in results.items():
+
+        pred = result["prediction"]
+
+        if pred:
 
             summary_rows.append({
 
-                "หลัก":
-                    display_name,
+                "ตำแหน่ง":
+                    pos,
 
-                "อันดับ 1":
-                    f"{top3[0][0]} "
-                    f"({top3[0][1]*100:.2f}%)",
+                "TOP-1":
+                    pred["top3"][0],
 
-                "อันดับ 2":
-                    f"{top3[1][0]} "
-                    f"({top3[1][1]*100:.2f}%)",
+                "TOP-2":
+                    pred["top3"][1],
 
-                "อันดับ 3":
-                    f"{top3[2][0]} "
-                    f"({top3[2][1]*100:.2f}%)"
+                "TOP-3":
+                    pred["top3"][2],
+
+                "TOP-1 %":
+                    round(
+                        pred["prob"][
+                            pred["top3"][0]
+                        ] * 100,
+                        2
+                    ),
+
+                "TOP-3 รวม %":
+                    round(
+                        sum(
+                            pred["prob"][d]
+                            for d in pred["top3"]
+                        ) * 100,
+                        2
+                    )
             })
 
-        if summary_rows:
 
-            st.dataframe(
-                pd.DataFrame(
-                    summary_rows
-                ),
-                hide_index=True,
-                use_container_width=True
+    summary_df = pd.DataFrame(
+        summary_rows
+    )
+
+    st.dataframe(
+        summary_df,
+        use_container_width=True,
+        hide_index=True
+    )
+
+
+    # ------------------------------------------------------------
+    # Individual positions
+    # ------------------------------------------------------------
+
+    for pos, result in results.items():
+
+        with st.expander(
+            f"📌 {pos}",
+            expanded=True
+        ):
+
+            show_prediction(
+                result
             )
 
-        st.info(
-            "หมายเหตุ: ค่า Probability เป็นคะแนนจากโมเดล "
-            "ไม่ใช่ความน่าจะเป็นทางคณิตศาสตร์ที่รับประกันผลรางวัล"
-        )
+            st.markdown(
+                "### 📊 สถิติเลข"
+            )
+
+            st.dataframe(
+                result["table"],
+                use_container_width=True,
+                hide_index=True
+            )
+
+            st.markdown(
+                "### 🧪 Walk-Forward Backtest"
+            )
+
+            show_backtest(
+                result
+            )
 
 
-# ============================================================
-# RUN
-# ============================================================
+# ================================================================
+# FOOTER
+# ================================================================
 
-if __name__ == "__main__":
+st.divider()
 
-    main()
+st.caption(
+    "LOTTO AI V2.2 | Robust Scraper + "
+    "Walk-Forward + Adaptive Ensemble + TOP-3"
+    )
